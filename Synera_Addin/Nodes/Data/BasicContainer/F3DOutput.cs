@@ -117,17 +117,17 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 }
 
                 var result = RunFusionAutomationAsync(filePath, inputValues, new Progress<double>()).GetAwaiter().GetResult();
-                var variables = result.variables;
-                var bodies = result.bodies;
-                UpdateInputs(variables);
-                dataAccess.SetListData(0, bodies);
+                //var variables = result.variables;
+                //var bodies = result.bodies;
+                // UpdateInputs(variables);
+                dataAccess.SetData(0, result);
             }
             catch (Exception ex)
             {
                 AddError($"Upload failed: {ex.Message}");
             }
         }
-        public async Task<(List<FusionFileUploadNode.Variable> variables, List<IBody> bodies)> RunFusionAutomationAsync(
+        public async Task<string> RunFusionAutomationAsync(
            string filePath,
            List<double> values,
            IProgress<double> progress)
@@ -136,23 +136,23 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             await InitializeAsync();
             string fileName = Path.GetFileName(filePath);
             string inputObjectId = await UploadFileToBucketAsync(filePath, fileName);
-            string workItemId = await SubmitWorkItemAsync(inputObjectId, fileName);
-            Dictionary<string, string> downloadUrls = await WaitForWorkItemToCompleteAsync(workItemId);
+            //string workItemId = await SubmitWorkItemAsync(inputObjectId, fileName);
+            //Dictionary<string, string> downloadUrls = await WaitForWorkItemToCompleteAsync(workItemId);
 
-            string resultDir = Path.Combine(Path.GetTempPath(), "fusion_result");
-            Directory.CreateDirectory(resultDir);
+            //string resultDir = Path.Combine(Path.GetTempPath(), "fusion_result");
+            //Directory.CreateDirectory(resultDir);
 
-            string stlPath = Path.Combine(resultDir, "result.stl");
-            string paramPath = Path.Combine(resultDir, "params.txt");
+            //string stlPath = Path.Combine(resultDir, "result.stl");
+            //string paramPath = Path.Combine(resultDir, "params.txt");
 
-            await DownloadFileAsync(downloadUrls["result.stl"], stlPath);
-            await DownloadFileAsync(downloadUrls["params.txt"], paramPath);
+            //await DownloadFileAsync(downloadUrls["result.stl"], stlPath);
+            //await DownloadFileAsync(downloadUrls["params.txt"], paramPath);
 
-            var variables = ParseParameters(paramPath);
+            //var variables = ParseParameters(paramPath);
             //var bodies = ParseSTL(stlPath);
-            var bodies = new List<IBody>();
-            progress.Report(1.0);
-            return (variables, bodies);
+            // var bodies = new List<IBody>();
+            // progress.Report(1.0);
+            return inputObjectId;
         }
         private List<FusionFileUploadNode.Variable> ParseParameters(string paramFilePath)
         {
@@ -324,44 +324,33 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         }
         private async Task<string> UploadFileToBucketAsync(string filePath, string fileName)
         {
+            // Step 1: Get signed upload URL
             var responseBody = await GetSignedUploadUrlAsync(_accessToken, __bucketKey, fileName);
-            // Extract the "urls" array from the JSON
+
             var json = JObject.Parse(responseBody);
             var urlsArray = json["urls"] as JArray;
 
-            if (urlsArray == null)
+            if (urlsArray == null || !urlsArray.Any())
                 throw new Exception("No 'urls' found in response");
 
-            var urls = new List<string>();
-            foreach (var urlItem in urlsArray)
-            {
-                urls.Add(urlItem.ToString());
-            }
-            var uploadKey = ExtractUploadKey(responseBody);
-            await UploadFileToSignedUrlAsync(urls.First(), filePath);
-            await FinalizeSignedS3UploadAsync(_accessToken, __bucketKey, fileName, uploadKey);
-           
-            var urn = ConvertObjectIdToUrn();
-            //byte[] fileBytes = File.ReadAllBytes(filePath);
-            //var requestMessage = new HttpRequestMessage(HttpMethod.Put, url)
-            //{
-            //    Content = new ByteArrayContent(fileBytes)
-            //};
+            string signedUrl = urlsArray.First().ToString();
+            string uploadKey = json["uploadKey"]?.ToString();
 
-            //requestMessage.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            //requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
+            if (string.IsNullOrEmpty(uploadKey))
+                throw new Exception("uploadKey missing in signed URL response.");
 
-            //var response = await _httpClient.SendAsync(requestMessage);
+            // Step 2: Upload file to S3 via signed URL
+            await UploadFileToSignedUrlAsync(signedUrl, filePath);
 
-            //if (!response.IsSuccessStatusCode)
-            //{
-            //    string error = await response.Content.ReadAsStringAsync();
-            //    Console.WriteLine($"Error uploading file: {response.StatusCode} - {error}");
-            //    return $"Failed: {response.StatusCode}";
-            //}
+            // Step 3: Finalize the upload
+            var finalizeResult = await FinalizeSignedS3UploadAsync(_accessToken, __bucketKey, fileName, uploadKey);
 
-            return $"Success: {response.StatusCode}";
+            // Step 4: Convert objectId to URN
+            string urn = ConvertObjectIdToUrn(finalizeResult.ObjectId);
+
+            return urn;
         }
+
         public string ConvertObjectIdToUrn(string objectId)
         {
             if (string.IsNullOrWhiteSpace(objectId))
@@ -418,7 +407,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             }
         }
 
-        public async Task FinalizeSignedS3UploadAsync(string accessToken, string bucketKey, string objectKey, string uploadKey)
+        public async Task<FinalizeUploadResult> FinalizeSignedS3UploadAsync(string accessToken, string bucketKey, string objectKey, string uploadKey)
         {
             var url = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{objectKey}/signeds3upload";
 
@@ -426,7 +415,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             {
                 ossbucketKey = bucketKey,
                 ossSourceFileObjectKey = objectKey,
-                access = "full", // or "read"
+                access = "full",
                 uploadKey = uploadKey
             };
 
@@ -442,11 +431,22 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             if (!response.IsSuccessStatusCode)
             {
-                throw new Exception($"Finalize upload failed: {response.StatusCode} - {responseText}");
+                throw new Exception($"❌ Finalize upload failed: {response.StatusCode} - {responseText}");
             }
 
-            Console.WriteLine("Finalize upload successful!");
-            Console.WriteLine(responseText);
+            Console.WriteLine("✅ Finalize upload successful.");
+            var resultJson = JObject.Parse(responseText);
+
+            return new FinalizeUploadResult
+            {
+                ObjectId = resultJson["objectId"]?.ToString(),
+                BucketKey = resultJson["bucketKey"]?.ToString(),
+                ObjectKey = resultJson["objectKey"]?.ToString(),
+                Location = resultJson["location"]?.ToString(),
+                Size = resultJson["size"]?.ToObject<long>() ?? 0,
+                ContentType = resultJson["contentType"]?.ToString(),
+                PolicyKey = resultJson["policyKey"]?.ToString()
+            };
         }
         public static async Task<string> GetAccessToken(string clientId, string clientSecret)
         {
