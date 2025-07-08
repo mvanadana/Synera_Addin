@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Addin>
+  <Guid>85f32fdf-1294-40a5-97d6-d76eb6bd244b</Guid>
+  <Name>Synera_Addin</Name>
+  <Description>Description for Synera_Addin.</Description>
+  <Publisher>My Awesome Company!</Publisher>
+  <Version>1.0.0.0</Version>
+  <Path></Path>
+  <Assembly>Synera_Addin.dll</Assembly>
+  <Icon>Icons/Synera_Addin.svg</Icon>
+  <SyneraVersion>7.1.0</SyneraVersion>
+</Addin>
