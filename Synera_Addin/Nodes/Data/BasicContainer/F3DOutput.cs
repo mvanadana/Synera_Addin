@@ -82,29 +82,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             try
             {
-                // ⚠️ Your real credentials
-                //var uploader = new ForgeUploader(clientId, clientSecret);
-                //string token = uploader.AuthenticateAsync().GetAwaiter().GetResult();
-
-                //if (string.IsNullOrEmpty(token))
-                //{
-                //    AddError("Forge authentication failed.");
-                //    return;
-                //}
-
-                //bool bucketCreated = uploader.CreateBucketAsync(bucketKey).GetAwaiter().GetResult();
-                //if (!bucketCreated)
-                //{
-                //    AddError("Bucket creation failed.");
-                //    return;
-                //}
-
-                //string objectId = uploader.UploadFileAsync(bucketKey, filePath).GetAwaiter().GetResult();
-                //if (string.IsNullOrEmpty(objectId))
-                //{
-                //    AddError("File upload failed.");
-                //    return;
-                //}
                 var inputValues = new List<double>();
                 for (int i = __inputVariablesStartIndex; i < InputParameters.Count; i++)
                 {
@@ -115,9 +92,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 }
 
                 var result = RunFusionAutomationAsync(filePath, inputValues, new Progress<double>()).GetAwaiter().GetResult();
-                //var variables = result.variables;
-                //var bodies = result.bodies;
-                // UpdateInputs(variables);
+               
                 dataAccess.SetData(0, result);
             }
             catch (Exception ex)
