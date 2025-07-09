@@ -7,7 +7,9 @@ using Synera.Core.Graph.Enums;
 using Synera.Core.Implementation.Graph;
 using Synera.Core.Implementation.Graph.Data.DataTypes;
 using Synera.Core.Implementation.UI;
+using Synera.Core.Modularity;
 using Synera.DataTypes;
+using Synera.DataTypes.Web;
 using Synera.Kernels.Fem.Results;
 using Synera.Kernels.Geometry;
 using Synera.Localization;
@@ -22,6 +24,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using static Synera.Core.Implementation.ApplicationService.IO.BaseZipApplicationIO;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 using Path = System.IO.Path;
 
@@ -34,8 +37,8 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         private const string __bucketKey = "aayush-08072025-joshi";
         private const string __activityId = "your-activity-id";
         private const string __region = "us-east";
-        string clientId = "BukNHwRiiA5ikyGJvw4A5pBWW8rVtfii4pfTWL4v26kFeWGG";
-        string clientSecret = "A4mKonxQsLgQOk3JynNBebZZdeHQhj4R6eG5qvSi1jygCBkoYECEme6vCD3gSkSe";
+        string clientId;
+        string clientSecret;
         private string _accessToken;
         private const int __inputVariablesStartIndex = 3;
         private readonly List<Variable> _nodeVariables = new();
@@ -59,25 +62,37 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             Description = new LocalizableString("Uploads Fusion .f3d file to Autodesk Forge.");
             GuiPriority = 1;
 
+            InputParameterManager.AddParameter<IAuthentication>(
+                 new LocalizableString("Authentication"),
+                 new LocalizableString("Output from Authentication Node"),
+                 ParameterAccess.Item); 
             InputParameterManager.AddParameter<SyneraString>(
                 new LocalizableString("Fusion File Path"),
                 new LocalizableString("Path to the .f3d file to upload."),
                 ParameterAccess.Item);
 
             OutputParameterManager.AddParameter<SyneraString>(
-                new LocalizableString("Forge URN"),
-                new LocalizableString("URN of uploaded file on Forge."),
+                new LocalizableString("Bodies/Parameters"),
+                new LocalizableString("Bodies/properties of the uploaded file"),
                 ParameterAccess.Item);
         }
 
         protected override void SolveInstance(IDataAccess dataAccess)
         {
-            if (!dataAccess.GetData(FilePathInputIndex, out SyneraString fileInput) || string.IsNullOrWhiteSpace(fileInput?.Value))
+            if (!dataAccess.GetData(0, out IAuthentication authObj) || authObj == null)
+            {
+                AddError("Missing authentication input. Connect the output of the Authentication node.");
+                return;
+            }
+            if (!dataAccess.GetData(1, out SyneraString fileInput) || string.IsNullOrWhiteSpace(fileInput?.Value))
             {
                 AddError("Fusion file path is not provided.");
                 return;
             }
-
+            
+            dynamic authDynamic = authObj;
+            clientId = authDynamic.AuthManager.Options.ClientId;
+            clientSecret = authDynamic.AuthManager.Options.ClientSecret;
             string filePath = fileInput.Value;
 
             try
@@ -124,6 +139,9 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             return ListOfViewable;
         }
+
+        
+
         public List<int> ExtractAllObjectIds(JObject json)
         {
             var objectIds = new List<int>();
