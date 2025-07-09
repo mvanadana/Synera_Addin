@@ -22,6 +22,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 using Path = System.IO.Path;
 
 namespace Synera_Addin.Nodes.Data.BasicContainer
@@ -82,9 +83,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             try
             {
                 // ⚠️ Your real credentials
-
-                string bucketKey = "vandana-bucket-synera-01"; // must be lowercase, unique
-
                 //var uploader = new ForgeUploader(clientId, clientSecret);
                 //string token = uploader.AuthenticateAsync().GetAwaiter().GetResult();
 
@@ -127,7 +125,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 AddError($"Upload failed: {ex.Message}");
             }
         }
-        public async Task<string> RunFusionAutomationAsync(
+        public async Task<List<ObjectProperties>> RunFusionAutomationAsync(
            string filePath,
            List<double> values,
            IProgress<double> progress)
@@ -136,152 +134,428 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             await InitializeAsync();
             string fileName = Path.GetFileName(filePath);
             string inputObjectId = await UploadFileToBucketAsync(filePath, fileName);
-            //string workItemId = await SubmitWorkItemAsync(inputObjectId, fileName);
-            //Dictionary<string, string> downloadUrls = await WaitForWorkItemToCompleteAsync(workItemId);
+            string urn = inputObjectId;
+            var fetcher = new ModelParameterFetcher(new HttpClient(), _accessToken);
+            bool success = await TranslateToSvf2FormatAsync(_accessToken, urn);
+            string status = await CheckTranslationStatusAsync(_accessToken, urn);
+            Thread.Sleep(3000);
+            string statusagain = await CheckTranslationStatusAsyncAgain(_accessToken, urn);
+            var viewables = await GetViewablesAsync(_accessToken, urn);
+            var hierarchy = await GetObjectHierarchyAsync(_accessToken, urn, viewables[0].Guid);
+            var objectIds = ExtractAllObjectIds(hierarchy);
+            var hierarchyFiltered = await GetFilteredObjectHierarchyAsync(_accessToken, urn, viewables[0].Guid, objectIds[0]);
+            JObject propertiesJson = await GetAllObjectPropertiesAsync(_accessToken, urn, viewables[0].Guid);
+            var ListOfViewable = ExtractObjectProperties(propertiesJson);
 
-            //string resultDir = Path.Combine(Path.GetTempPath(), "fusion_result");
-            //Directory.CreateDirectory(resultDir);
-
-            //string stlPath = Path.Combine(resultDir, "result.stl");
-            //string paramPath = Path.Combine(resultDir, "params.txt");
-
-            //await DownloadFileAsync(downloadUrls["result.stl"], stlPath);
-            //await DownloadFileAsync(downloadUrls["params.txt"], paramPath);
-
-            //var variables = ParseParameters(paramPath);
-            //var bodies = ParseSTL(stlPath);
-            // var bodies = new List<IBody>();
-            // progress.Report(1.0);
-            return inputObjectId;
+            return ListOfViewable;
         }
-        private List<FusionFileUploadNode.Variable> ParseParameters(string paramFilePath)
+        public List<int> ExtractAllObjectIds(JObject json)
         {
-            var result = new List<FusionFileUploadNode.Variable>();
+            var objectIds = new List<int>();
 
-            foreach (var line in File.ReadAllLines(paramFilePath))
+            void Traverse(JToken node)
             {
-                var parts = line.Split('=');
-                if (parts.Length == 2 && double.TryParse(parts[1], out double val))
+                if (node == null)
+                    return;
+
+                if (node.Type == JTokenType.Object && node["objectid"] != null)
                 {
-                    result.Add(new FusionFileUploadNode.Variable
+                    if (int.TryParse(node["objectid"]?.ToString(), out int id))
                     {
-                        Name = parts[0],
-                        Value = val
-                    });
+                        objectIds.Add(id);
+                    }
+                }
+
+                if (node["objects"] != null)
+                {
+                    foreach (var child in node["objects"])
+                    {
+                        Traverse(child);
+                    }
+                }
+            }
+
+            var rootObjects = json["data"]?["objects"];
+            if (rootObjects != null)
+            {
+                foreach (var obj in rootObjects)
+                {
+                    Traverse(obj);
+                }
+            }
+
+            return objectIds;
+        }
+
+        public async Task<JObject> QueryPropertiesAsync(
+      string accessToken,
+      string urn,
+      string guid,
+      string namePrefix = "",
+      int offset = 0,
+      int limit = 10)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{guid}/properties:query";
+
+            // Create the base payload
+            var payload = new JObject
+            {
+                ["fields"] = new JArray("objectid", "name", "externalId", "properties.Dimensions"),
+                ["pagination"] = new JObject
+                {
+                    ["offset"] = offset,
+                    ["limit"] = limit
+                },
+                ["payload"] = "text"
+            };
+
+            // ONLY include query if namePrefix is provided
+            if (!string.IsNullOrEmpty(namePrefix))
+            {
+                payload["query"] = new JObject
+                {
+                    ["$prefix"] = new JArray("name", namePrefix)
+                };
+            }
+
+            var jsonContent = new StringContent(payload.ToString(), Encoding.UTF8, "application/json");
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Content = jsonContent;
+
+            using var response = await _httpClient.SendAsync(request);
+            string responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"Query failed: {response.StatusCode} - {responseContent}");
+            }
+
+            return JObject.Parse(responseContent);
+        }
+
+        public async Task<JObject> GetAllObjectPropertiesAsync(string accessToken, string urn, string guid)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{guid}/properties";
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var response = await _httpClient.SendAsync(request);
+            string responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"❌ Failed to retrieve object properties: {response.StatusCode} - {responseContent}");
+            }
+
+            var json = JObject.Parse(responseContent);
+
+            if (json["result"]?.ToString() == "success")
+            {
+                // This means the job is still processing
+                throw new Exception("⚠️ Object properties are still being processed. Please retry after some time.");
+            }
+
+            return json;
+        }
+        public async Task<List<(string Name, string Role, string Guid)>> GetViewablesAsync(string accessToken, string urn)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata";
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"Failed to get metadata: {response.StatusCode} - {json}");
+            }
+
+            var result = new List<(string Name, string Role, string Guid)>();
+
+            var jObject = JObject.Parse(json);
+            var metadata = jObject["data"]?["metadata"];
+
+            if (metadata != null)
+            {
+                foreach (var item in metadata)
+                {
+                    string guid = item["guid"]?.ToString();
+                    string name = item["name"]?.ToString();
+                    string role = item["role"]?.ToString();
+
+                    if (!string.IsNullOrEmpty(guid))
+                    {
+                        result.Add((name, role, guid));
+                    }
                 }
             }
 
             return result;
         }
 
-        private async Task DownloadFileAsync(string url, string destinationPath)
+        public async Task<JObject> GetObjectHierarchyAsync(string accessToken, string urn, string guid)
         {
-            using var httpClient = new HttpClient();
-            var response = await httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            int maxAttempts = 10;
+            int delaySeconds = 5;
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{guid}";
 
-            await using var fs = new FileStream(destinationPath, FileMode.Create);
-            await response.Content.CopyToAsync(fs);
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+                using var response = await _httpClient.SendAsync(request);
+                string responseContent = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Failed to retrieve object hierarchy: {response.StatusCode} - {responseContent}");
+                }
+
+                var json = JObject.Parse(responseContent);
+
+                if (json["data"] != null)
+                {
+                    Console.WriteLine($"✅ Object hierarchy loaded on attempt {attempt}.");
+                    return json;
+                }
+
+                Console.WriteLine($"⏳ Attempt {attempt}: Still processing... Retrying in {delaySeconds} seconds.");
+                await Task.Delay(delaySeconds * 1000);
+            }
+
+            throw new Exception("Object hierarchy is still being processed after maximum attempts. Try again later.");
         }
 
-        private async Task<Dictionary<string, string>> WaitForWorkItemToCompleteAsync(string workItemId)
+        public async Task<JObject> GetFilteredObjectHierarchyAsync(string accessToken, string urn, string guid, int objectId)
         {
-            var client = new RestClient($"https://developer.api.autodesk.com/da/{__region}/v3/workitems/{workItemId}");
-            var request = new RestRequest
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{guid}?objectid={objectId}";
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var response = await _httpClient.SendAsync(request);
+            string responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
             {
-                Method = Method.Get
+                throw new Exception($"❌ Failed to retrieve filtered object hierarchy: {response.StatusCode} - {responseContent}");
+            }
+
+            var json = JObject.Parse(responseContent);
+
+            if (json["data"] == null)
+            {
+                throw new Exception("⚠️ Filtered object hierarchy is still being processed or returned empty.");
+            }
+
+            Console.WriteLine("✅ Filtered object hierarchy retrieved successfully.");
+            return json;
+        }
+
+
+        public async Task<bool> TranslateToSvf2FormatAsync(string accessToken, string urn)
+        {
+            string url = "https://developer.api.autodesk.com/modelderivative/v2/designdata/job";
+
+            var payload = new
+            {
+                input = new
+                {
+                    urn = urn
+                },
+                output = new
+                {
+                    formats = new[]
+                    {
+                new
+                {
+                    type = "svf2",
+                    views = new[] { "2d", "3d" }
+                }
+            }
+                }
             };
 
+            var jsonContent = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
 
-            request.AddHeader("Authorization", $"Bearer {_accessToken}");
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Headers.Add("x-ads-force", "true"); // Force re-translation
+            request.Content = jsonContent;
 
-            while (true)
+            using var httpClient = new HttpClient();
+            var response = await httpClient.SendAsync(request);
+            string responseContent = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
             {
-                var response = await client.ExecuteAsync(request);
-                dynamic result = JsonConvert.DeserializeObject(response.Content);
-                string status = result.status;
+                throw new Exception($"❌ Model translation failed: {response.StatusCode} - {responseContent}");
+            }
+
+            Console.WriteLine("✅ SVF2 translation job submitted successfully.");
+            return true;
+        }
+
+        public async Task<string> CheckTranslationStatusAsync(string accessToken, string urn)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/manifest";
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var httpClient = new HttpClient();
+            var response = await httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"❌ Failed to fetch manifest: {response.StatusCode} - {json}");
+            }
+
+            var manifest = JObject.Parse(json);
+            var status = manifest["status"]?.ToString();
+
+            if (string.IsNullOrEmpty(status))
+                throw new Exception("❌ Translation status not found in manifest response.");
+
+            Console.WriteLine($"🛈 Translation job status: {status}");
+
+            return status;
+        }
+
+        public async Task<string> CheckTranslationStatusAsyncAgain(string accessToken, string urn)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/manifest";
+            int maxAttempts = 20;
+            int delaySeconds = 10;
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+                var response = await _httpClient.SendAsync(request);
+                var content = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new Exception($"Failed to get manifest: {response.StatusCode} - {content}");
+                }
+
+                var json = JObject.Parse(content);
+                string status = json["status"]?.ToString();
+                string progress = json["progress"]?.ToString();
+
+                Console.WriteLine($"⏳ Attempt {attempt + 1}: Status = {status}, Progress = {progress}");
 
                 if (status == "success")
                 {
-                    return new Dictionary<string, string>
-                    {
-                        ["result.stl"] = result.arguments["result.stl"].url,
-                        ["params.txt"] = result.arguments["params.txt"].url
-                    };
+                    Console.WriteLine("✅ Translation succeeded!");
+                    return "success";
                 }
-
-                if (status == "failed")
+                else if (status == "failed" || status == "timeout")
                 {
-                    throw new Exception("Fusion DA job failed.");
+                    Console.WriteLine($"❌ Translation {status}.");
+                    return status;
                 }
 
-                //Thread.Sleep(3000); // Polling delay
+                await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
             }
+
+            throw new TimeoutException("⏰ Translation polling timed out.");
+        }
+        public async Task<string> GetViewableGuidAsync(string urn, string accessToken)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata";
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+
+            var data = JObject.Parse(json);
+            var guid = data["data"]?["metadata"]?.First()?["guid"]?.ToString();
+
+            if (string.IsNullOrEmpty(guid))
+                throw new Exception("No GUID found in metadata response.");
+
+            return guid;
+        }
+        public async Task<string> GetObjectTreeAsync(string urn, string viewableGuid, string accessToken)
+        {
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{viewableGuid}";
+
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Failed to get object tree: {response.StatusCode} - {json}");
+
+            return json;
         }
 
-        private void UpdateInputs(IList<Variable> modelVariables)
+        public async Task<string> GetAllPropertiesAsync(string urn, string viewableGuid, string accessToken)
         {
-            Document?.UndoRedoManager.OpenTransaction();
-            try
-            {
-                _nodeVariables.Clear();
-                var oldVars = InputParameters.Skip(__inputVariablesStartIndex).Select(p => p.Name.Value).ToList();
-                var newVars = modelVariables.Select(v => v.Name).ToList();
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{viewableGuid}/properties";
 
-                foreach (var name in oldVars.Except(newVars))
-                {
-                    RemoveRuntimeParameter(InputParameters.First(p => p.Name == name));
-                }
+            var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-                foreach (var name in newVars.Except(oldVars))
-                {
-                    var modelVar = modelVariables.First(v => v.Name == name);
-                    var options = new InputParameterOptions(name, new LocalizableString("Parameter", typeof(Resources)), typeof(SyneraDouble))
-                    {
-                        DefaultValue = new DataTree<IGraphDataType>(new SyneraDouble(modelVar.Value))
-                    };
-                    AddRuntimeParameter(InputParameterManager.CreateParameter(options), InputParameters.Count);
-                }
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
 
-                foreach (var input in InputParameters.Skip(__inputVariablesStartIndex))
-                {
-                    var modelVar = modelVariables.First(v => v.Name == input.Name);
-                    _nodeVariables.Add(modelVar);
-                }
-            }
-            finally
-            {
-                Document?.UndoRedoManager.DiscardTransaction();
-            }
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Failed to get properties: {response.StatusCode} - {json}");
+
+            return json;
         }
-        public async Task CreateBucketAsync(string accessToken)
+        public async Task<string> QueryFilteredPropertiesAsync(string urn, string viewableGuid, string accessToken)
         {
-            var url = "https://developer.api.autodesk.com/oss/v2/buckets";
-            var client = new RestClient(url);
-            // Fix for CS0117: 'Method' does not contain a definition for 'POST'
-            // The issue arises because the `Method` enum does not have a member named `POST`.
-            // Based on the provided type signature, the correct member name is `Post` (case-sensitive).
+            string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata/{viewableGuid}/properties:query";
 
-            var request = new RestRequest
+            var payload = new
             {
-                Method = Method.Post
+                query = new Dictionary<string, object>
+        {
+            { "$prefix", new[] { "name", "M_Pile-Steel" } }
+        },
+                fields = new[]
+                {
+            "objectid",
+            "name",
+            "externalId",
+            "properties.Dimensions"
+        },
+                pagination = new
+                {
+                    offset = 0,
+                    limit = 10
+                },
+                payload = "text"
             };
-            request.AddHeader("Authorization", $"Bearer {accessToken}");
-            request.AddHeader("Content-Type", "application/json");
 
-            var body = new
-            {
-                bucketKey = "synera-fusion-bucket",
-                policyKey = "transient" // or "temporary" / "persistent"
-            };
+            var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
 
-            request.AddJsonBody(body);
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Content = content;
 
-            var response = await client.ExecuteAsync(request);
-            if (!response.IsSuccessful)
-            {
-                throw new Exception($"Bucket creation failed: {response.Content}");
-            }
+            var response = await _httpClient.SendAsync(request);
+            var json = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"Failed to query specific properties: {response.StatusCode} - {json}");
+
+            return json;
         }
 
         public async Task<string> GetSignedUploadUrlAsync(string accessToken, string bucketKey, string objectKey, int minutesExpiration = 2, string uploadKey = null)
@@ -361,16 +635,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             return urn.TrimEnd('=').Replace('+', '-').Replace('/', '_'); // APS URNs are base64url-encoded
         }
 
-        public string ExtractUploadKey(string responseBody)
-        {
-            var json = JObject.Parse(responseBody);
-            var uploadKey = json["uploadKey"]?.ToString();
-
-            if (string.IsNullOrEmpty(uploadKey))
-                throw new Exception("uploadKey not found in signedS3Upload response.");
-
-            return uploadKey;
-        }
         public async Task UploadFileToSignedUrlAsync(string signedUrl, string filePath)
         {
             if (!File.Exists(filePath))
@@ -475,39 +739,35 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             dynamic result = Newtonsoft.Json.JsonConvert.DeserializeObject(json);
             return result.access_token;
         }
-        private async Task<string> SubmitWorkItemAsync(string objectId, string fileName)
+        public class ObjectProperties
         {
-            var client = new RestClient($"https://developer.api.autodesk.com/da/{__region}/v3/workitems");
-            var request = new RestRequest
-            {
-                Method = Method.Post
-            };
+            public int ObjectId { get; set; }
+            public string Name { get; set; }
+            public string ExternalId { get; set; }
+            public JObject Properties { get; set; }
+        }
 
-            request.AddHeader("Authorization", $"Bearer {_accessToken}");
-            request.AddHeader("Content-Type", "application/json");
+        public List<ObjectProperties> ExtractObjectProperties(JObject responseJson)
+        {
+            var resultList = new List<ObjectProperties>();
 
-            var body = new
+            var collection = responseJson["data"]?["collection"] as JArray;
+            if (collection == null) return resultList;
+
+            foreach (var item in collection)
             {
-                activityId = __activityId,
-                arguments = new Dictionary<string, object>
+                var obj = new ObjectProperties
                 {
-                    ["inputFile"] = new
-                    {
-                        url = $"https://developer.api.autodesk.com/oss/v2/buckets/{__bucketKey}/objects/{fileName}",
-                        headers = new Dictionary<string, string>
-                        {
-                            { "Authorization", $"Bearer {_accessToken}" }
-                        }
-                    },
-                    ["result.stl"] = new { verb = "put" },
-                    ["params.txt"] = new { verb = "put" }
-                }
-            };
+                    ObjectId = item["objectid"]?.Value<int>() ?? 0,
+                    Name = item["name"]?.ToString() ?? "",
+                    ExternalId = item["externalId"]?.ToString() ?? "",
+                    Properties = item["properties"] as JObject ?? new JObject()
+                };
 
-            request.AddJsonBody(body);
-            var response = await client.ExecuteAsync(request);
-            dynamic result = JsonConvert.DeserializeObject(response.Content);
-            return result.id;
+                resultList.Add(obj);
+            }
+
+            return resultList;
         }
 
     }
