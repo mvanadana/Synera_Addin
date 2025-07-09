@@ -115,7 +115,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 AddError($"Upload failed: {ex.Message}");
             }
         }
-        public async Task<List<ObjectProperties>> RunFusionAutomationAsync(
+        public async Task<string> RunFusionAutomationAsync(
            string filePath,
            List<double> values,
            IProgress<double> progress)
@@ -136,8 +136,9 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var hierarchyFiltered = await GetFilteredObjectHierarchyAsync(_accessToken, urn, viewables[0].Guid, objectIds[0]);
             JObject propertiesJson = await GetAllObjectPropertiesAsync(_accessToken, urn, viewables[0].Guid);
             var ListOfViewable = ExtractObjectProperties(propertiesJson);
+            var resultstring = ExtractObjectPropertiesAsString(propertiesJson);
 
-            return ListOfViewable;
+            return resultstring;
         }
 
         
@@ -253,6 +254,46 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             return json;
         }
+
+        public SyneraString ExtractObjectPropertiesAsString(JObject responseJson)
+        {
+            var sb = new StringBuilder();
+            var collection = responseJson["data"]?["collection"] as JArray;
+            if (collection == null) return new SyneraString("No data found.");
+
+            int index = 1;
+            foreach (var item in collection)
+            {
+                sb.AppendLine($"Body {index++}");
+                sb.AppendLine($"Name: {item["name"]?.ToString() ?? "N/A"}");
+                sb.AppendLine($"ExternalId: {item["externalId"]?.ToString() ?? "N/A"}");
+                sb.AppendLine("Properties:");
+
+                var props = item["properties"] as JObject;
+                if (props != null)
+                {
+                    foreach (var prop in props.Properties())
+                    {
+                        if (prop.Value.Type == JTokenType.Object)
+                        {
+                            foreach (var nested in (JObject)prop.Value)
+                            {
+                                sb.AppendLine($"  {nested.Key}: {nested.Value}");
+                            }
+                        }
+                        else
+                        {
+                            sb.AppendLine($"  {prop.Name}: {prop.Value}");
+                        }
+                    }
+                }
+
+                sb.AppendLine(); // Add spacing between bodies
+            }
+
+            return new SyneraString(sb.ToString());
+        }
+
         public async Task<List<(string Name, string Role, string Guid)>> GetViewablesAsync(string accessToken, string urn)
         {
             string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{urn}/metadata";
