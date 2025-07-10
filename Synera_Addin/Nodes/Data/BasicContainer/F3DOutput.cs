@@ -6,6 +6,7 @@ using Synera.Core.Graph.Data;
 using Synera.Core.Graph.Enums;
 using Synera.Core.Implementation.Graph;
 using Synera.Core.Implementation.Graph.Data.DataTypes;
+using Synera.Core.Implementation.Serialization;
 using Synera.Core.Implementation.UI;
 using Synera.Core.Modularity;
 using Synera.DataTypes;
@@ -115,7 +116,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 AddError($"Upload failed: {ex.Message}");
             }
         }
-        public async Task<string> RunFusionAutomationAsync(
+        public async Task<JObject> RunFusionAutomationAsync(
            string filePath,
            List<double> values,
            IProgress<double> progress)
@@ -138,7 +139,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var ListOfViewable = ExtractObjectProperties(propertiesJson);
             var resultstring = ExtractObjectPropertiesAsString(propertiesJson);
 
-            return resultstring;
+            return propertiesJson;
         }
 
         
