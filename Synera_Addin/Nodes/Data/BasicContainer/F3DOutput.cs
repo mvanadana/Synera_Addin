@@ -13,6 +13,7 @@ using Synera.DataTypes;
 using Synera.DataTypes.Web;
 using Synera.Kernels.Fem.Results;
 using Synera.Kernels.Geometry;
+using Synera.Kernels.Translators;
 using Synera.Localization;
 using Synera.Utilities;
 using System;
@@ -28,6 +29,7 @@ using System.Threading.Tasks;
 using static Synera.Core.Implementation.ApplicationService.IO.BaseZipApplicationIO;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 using Path = System.IO.Path;
+using Synera.Core.Implementation.ApplicationService;
 
 namespace Synera_Addin.Nodes.Data.BasicContainer
 {
@@ -47,9 +49,15 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         private readonly HttpClient _httpClient = new HttpClient();
         public class Variable
         {
-            public string Name { get; set; }
+            public string Name
+            {
+                get; set;
+            }
 
-            public double Value { get; set; }
+            public double Value
+            {
+                get; set;
+            }
         }
         public async Task InitializeAsync()
         {
@@ -66,16 +74,16 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             InputParameterManager.AddParameter<IAuthentication>(
                  new LocalizableString("Authentication"),
                  new LocalizableString("Output from Authentication Node"),
-                 ParameterAccess.Item); 
+                 ParameterAccess.Item);
             InputParameterManager.AddParameter<SyneraString>(
                 new LocalizableString("Fusion File Path"),
                 new LocalizableString("Path to the .f3d file to upload."),
                 ParameterAccess.Item);
 
-            OutputParameterManager.AddParameter<SyneraString>(
+            OutputParameterManager.AddParameter<IBody>(
                 new LocalizableString("Bodies/Parameters"),
                 new LocalizableString("Bodies/properties of the uploaded file"),
-                ParameterAccess.Item);
+                ParameterAccess.List);
         }
 
         protected override void SolveInstance(IDataAccess dataAccess)
@@ -90,7 +98,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 AddError("Fusion file path is not provided.");
                 return;
             }
-            
+
             dynamic authDynamic = authObj;
             clientId = authDynamic.AuthManager.Options.ClientId;
             clientSecret = authDynamic.AuthManager.Options.ClientSecret;
@@ -107,9 +115,23 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                     }
                 }
 
-                var result = RunFusionAutomationAsync(filePath, inputValues, new Progress<double>()).GetAwaiter().GetResult();
-               
-                dataAccess.SetData(0, result);
+                IGeometryImportTranslator translator = Application.Current.TranslatorManager
+                .Get<IGeometryImportTranslator>(t => t.IsSupportedImportFormat(filePath));
+                if (translator == null)
+                    throw new InvalidOperationException("The file format is not supported.");
+
+                IBody[] bodies = translator.ImportBodies(filePath);
+
+
+                IGeometryExportTranslator translator1 = Application.Current.TranslatorManager
+                .Get<IGeometryExportTranslator>(t => t.IsSupportedExportFormat(filePath));
+                if (translator1 == null)
+                    throw new InvalidOperationException("The file format is not supported.");
+
+                translator1.ExportBodies(bodies, filePath);
+                //var result = RunFusionAutomationAsync(filePath, inputValues, new Progress<double>()).GetAwaiter().GetResult();
+
+                dataAccess.SetListData(0, bodies.ToList());
             }
             catch (Exception ex)
             {
@@ -142,7 +164,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             return propertiesJson;
         }
 
-        
+
 
         public List<int> ExtractAllObjectIds(JObject json)
         {
@@ -260,7 +282,8 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         {
             var sb = new StringBuilder();
             var collection = responseJson["data"]?["collection"] as JArray;
-            if (collection == null) return new SyneraString("No data found.");
+            if (collection == null)
+                return new SyneraString("No data found.");
 
             int index = 1;
             foreach (var item in collection)
@@ -776,10 +799,22 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         }
         public class ObjectProperties
         {
-            public int ObjectId { get; set; }
-            public string Name { get; set; }
-            public string ExternalId { get; set; }
-            public JObject Properties { get; set; }
+            public int ObjectId
+            {
+                get; set;
+            }
+            public string Name
+            {
+                get; set;
+            }
+            public string ExternalId
+            {
+                get; set;
+            }
+            public JObject Properties
+            {
+                get; set;
+            }
         }
 
         public List<ObjectProperties> ExtractObjectProperties(JObject responseJson)
@@ -787,7 +822,8 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var resultList = new List<ObjectProperties>();
 
             var collection = responseJson["data"]?["collection"] as JArray;
-            if (collection == null) return resultList;
+            if (collection == null)
+                return resultList;
 
             foreach (var item in collection)
             {
