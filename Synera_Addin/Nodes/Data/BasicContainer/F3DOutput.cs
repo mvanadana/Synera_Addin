@@ -14,7 +14,9 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
+using System.Security.Policy;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Path = System.IO.Path;
 
@@ -63,8 +65,8 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 ParameterAccess.Item);
 
             InputParameterManager.AddParameter<SyneraString>(
-                new LocalizableString("Fusion File Path"),
-                new LocalizableString("Path to the .f3d file to upload."),
+                new LocalizableString("Fusion url"),
+                new LocalizableString("URL of the .f3d file."),
                 ParameterAccess.Item);
 
             OutputParameterManager.AddParameter<SyneraString>(
@@ -81,7 +83,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 return;
             }
 
-            if (!dataAccess.GetData(1, out SyneraString fileInput) || string.IsNullOrWhiteSpace(fileInput?.Value))
+            if (!dataAccess.GetData(1, out SyneraString UrlPath) || string.IsNullOrWhiteSpace(UrlPath?.Value))
             {
                 AddError("Fusion file path is not provided.");
                 return;
@@ -90,7 +92,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             dynamic authDynamic = authObj;
             clientId = authDynamic.AuthManager.Options.ClientId;
             clientSecret = authDynamic.AuthManager.Options.ClientSecret;
-            string filePath = fileInput.Value;
+            string url = UrlPath.Value;
 
             try
             {
@@ -102,8 +104,9 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                         inputValues.Add(val);
                     }
                 }
-
-                var result = RunFusionAutomationAsync(filePath, inputValues, new Progress<double>()).GetAwaiter().GetResult();
+               
+               
+                var result = RunFusionAutomationAsync(url, inputValues, new Progress<double>()).GetAwaiter().GetResult();
                 dataAccess.SetData(0, result.ToString());
             }
             catch (Exception ex)
@@ -113,7 +116,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         }
 
         public async Task<JObject> RunFusionAutomationAsync(
-            string filePath,
+            string urnOfFile,
             List<double> values,
             IProgress<double> progress)
         {
@@ -131,24 +134,106 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 ;
             }
 
-            bool result = await EnsureAppBundleUploadedAsync(
-            _accessToken,
-            "ConfigureDesignNew111",
-            @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip"
-            );
+            var decodedURN = ExtractAndDecodeUrnFromUrl(urnOfFile);
 
-            if (!result)
+            string accessToken = _accessToken;
+            string appBundleId = "ConfigureDesignAppBundle_v60";
+            string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
+            string activityId = "ConfigureDesignActivity";
+            string aliasId = "0156";
+            string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
+            string pAT = "7b0148b7e25f90282194409afb6ff8b339ca1829";
+            string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId;
+            var parameters = new Dictionary<string, string>
+{
+    { "d3", "40mm" }
+};
+            var uploader = new ForgeAppBundleUploader();
+
+            var metadata = await uploader.RegisterAppBundleAsync(accessToken, appBundleId, zipPath);
+
+            if (metadata != null)
             {
-                Console.WriteLine("AppBundle setup failed.");
+                bool uploaded = await uploader.UploadZipToS3Async(metadata, zipPath);
+                if (uploaded)
+                {
+                    await uploader.CreateAppBundleAliasAsync(accessToken, appBundleId, aliasId, metadata.Version);
+                }
             }
-            string fileName = Path.GetFileName(filePath);
+
+            await uploader.CreateActivityAsync(accessToken, activityId, appBundleQualifiedId);
+
+            await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId+"mycurrentAlias");
+            var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
+
+            
 
             // Dummy result return for now
             return JObject.FromObject(new
             {
-                message = "Token initialized and file ready for upload.",
-                file = fileName
+                message = "Token initialized and file ready for upload."
+                
             });
+        }
+
+
+        public static string ExtractAndDecodeUrnFromUrl(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url))
+                throw new ArgumentException("Input URL cannot be null or empty.");
+
+            var matches = Regex.Matches(url, @"(?<=/)([a-zA-Z0-9_-]{20,})(?=/|$)");
+
+            foreach (Match match in matches)
+            {
+                string candidate = match.Value;
+                try
+                {
+                    string decoded = DecodeBase64Urn(candidate);
+
+                    if (decoded.StartsWith("urn:adsk"))
+                        return decoded;
+                }
+                catch
+                {
+                    // Ignore
+                }
+            }
+
+            throw new InvalidOperationException("No valid URN found in the URL.");
+        }
+
+        public static string DecodeBase64Urn(string base64)
+        {
+            // Add padding if needed
+            int padding = 4 - (base64.Length % 4);
+            if (padding != 4)
+            {
+                base64 = base64 + new string('=', padding);
+            }
+
+            base64 = base64.Replace('-', '+').Replace('_', '/');
+
+            byte[] bytes = Convert.FromBase64String(base64);
+            return Encoding.UTF8.GetString(bytes);
+        }
+
+
+        public static async Task<string> FollowRedirectAndGetFinalUrlAsync(string shortUrl)
+        {
+            using (var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }))
+            {
+                var response = await client.GetAsync(shortUrl);
+
+                if (response.StatusCode == HttpStatusCode.Redirect ||
+                    response.StatusCode == HttpStatusCode.MovedPermanently ||
+                    response.StatusCode == HttpStatusCode.Found)
+                {
+                    return response.Headers.Location.ToString();
+                }
+
+                throw new Exception("The URL did not redirect.");
+            }
         }
 
         public async Task InitializeAsync()
@@ -241,100 +326,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             }
         }
 
-        public async Task<bool> EnsureAppBundleUploadedAsync(string accessToken, string appBundleId, string zipFilePath)
-        {
-            using var client = new HttpClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-
-            dynamic uploadParams = null;
-            string baseUrl = "https://developer.api.autodesk.com/da/us-east/v3";
-            // Step 1: Check if AppBundle already exists
-            var checkResponse = await client.GetAsync($"{baseUrl}/appbundles/{appBundleId}");
-            if (checkResponse.IsSuccessStatusCode)
-            {
-                Console.WriteLine("ℹ️ AppBundle exists. Creating new version...");
-
-                // Step 2: Create new version
-                var versionResponse = await client.PostAsync(
-                    $"{baseUrl}/appbundles/{appBundleId}/versions",
-                    new StringContent("{}", Encoding.UTF8, "application/json")
-                );
-                var versionJson = await versionResponse.Content.ReadAsStringAsync();
-
-                if (!versionResponse.IsSuccessStatusCode)
-                {
-                    Console.WriteLine($"❌ Failed to create AppBundle version: {versionResponse.StatusCode} - {versionJson}");
-                    return false;
-                }
-
-                dynamic versionData = JsonConvert.DeserializeObject(versionJson);
-                uploadParams = versionData.uploadParameters;
-            }
-            else if (checkResponse.StatusCode == HttpStatusCode.NotFound)
-            {
-                Console.WriteLine("ℹ️ AppBundle not found. Creating new AppBundle...");
-
-                // Step 3: Register new AppBundle
-                var registerPayload = new
-                {
-                    id = appBundleId,
-                    engine = "Autodesk.Fusion+2602_01", // ✅ Specific engine
-                    description = "Fusion AppBundle with automatic versioning"
-                };
-
-                var registerContent = new StringContent(JsonConvert.SerializeObject(registerPayload), Encoding.UTF8, "application/json");
-                var registerResponse = await client.PostAsync($"{baseUrl}/appbundles", registerContent);
-                var registerJson = await registerResponse.Content.ReadAsStringAsync();
-
-                if (!registerResponse.IsSuccessStatusCode)
-                {
-                    Console.WriteLine($"❌ Failed to register AppBundle: {registerResponse.StatusCode} - {registerJson}");
-                    return false;
-                }
-
-                dynamic registerResult = JsonConvert.DeserializeObject(registerJson);
-                uploadParams = registerResult.uploadParameters;
-            }
-            else
-            {
-                string err = await checkResponse.Content.ReadAsStringAsync();
-                Console.WriteLine($"❌ Unexpected error checking AppBundle: {checkResponse.StatusCode} - {err}");
-                return false;
-            }
-
-            // Step 4: Upload ZIP to S3 using signed URL
-            using var uploadClient = new HttpClient();
-            using var form = new MultipartFormDataContent();
-
-            var endpointUrl = (string)uploadParams.endpointURL;
-            var formData = uploadParams.formData;
-
-            foreach (JProperty field in formData)
-            {
-                if (field.Name != "file")
-                {
-                    form.Add(new StringContent(field.Value.ToString()), field.Name);
-                }
-            }
-
-            using var zipStream = File.OpenRead(zipFilePath);
-            var fileContent = new StreamContent(zipStream);
-            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            form.Add(fileContent, "file", Path.GetFileName(zipFilePath));
-
-            var s3Response = await uploadClient.PostAsync(endpointUrl, form);
-            if (!s3Response.IsSuccessStatusCode)
-            {
-                string error = await s3Response.Content.ReadAsStringAsync();
-                Console.WriteLine($"❌ Upload to S3 failed: {s3Response.StatusCode} - {error}");
-                return false;
-            }
-
-            Console.WriteLine("✅ AppBundle uploaded successfully to S3.");
-            return true;
-        }
-
-
+        
 
     }
 }
