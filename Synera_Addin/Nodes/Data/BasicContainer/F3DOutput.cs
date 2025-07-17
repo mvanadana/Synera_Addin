@@ -33,7 +33,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
     }
 
     [Guid("4dd60cf0-4797-4f93-a7aa-f51d4e126b9d")]
-    public sealed class FusionFileUploadNode : Node
+    public sealed class FusionRun : Node
     {
         private const int FilePathInputIndex = 0;
         private const string __bucketKey = "aayush-08072025-joshi";
