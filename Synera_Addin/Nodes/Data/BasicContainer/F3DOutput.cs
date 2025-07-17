@@ -52,7 +52,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         // Computed property to access current token
         private string _accessToken => _tokenInfo?.access_token;
 
-        public FusionFileUploadNode()
+        public FusionRun()
             : base(new LocalizableString("Fusion File Upload"))
         {
             Category = Categories.Data;
