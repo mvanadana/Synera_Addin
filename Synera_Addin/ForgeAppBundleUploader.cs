@@ -212,16 +212,16 @@ namespace Synera_Addin
                 id = activityId,
                 engine = "Autodesk.Fusion+Latest",
                 commandLine = new[]
-{
-   @"$(engine.path)\Fusion360Core.exe --headless /Contents/main.ts"
-},
-            parameters = new Dictionary<string, object>
+                {
+            @"$(engine.path)\Fusion360Core.exe --headless /Contents/main.ts"
+        },
+                parameters = new Dictionary<string, object>
         {
             {
                 "TaskParameters", new Dictionary<string, object>
                 {
                     { "verb", "read" },
-                    { "description", "the parameters for the script" },
+                    { "description", "The parameters for the script" },
                     { "required", false }
                 }
             },
@@ -229,8 +229,17 @@ namespace Synera_Addin
                 "PersonalAccessToken", new Dictionary<string, object>
                 {
                     { "verb", "read" },
-                    { "description", "the personal access token to use" },
+                    { "description", "Fusion personal access token" },
                     { "required", true }
+                }
+            },
+            {
+                "ResultParameters", new Dictionary<string, object>
+                {
+                    { "verb", "get" },
+                    { "localName", "output.json" }, // This is what the Fusion script writes to
+                    { "description", "The output parameters from script" },
+                    { "required", false }
                 }
             }
         },
@@ -238,11 +247,11 @@ namespace Synera_Addin
                 {
             appBundleQualifiedId  // e.g., Synera_NickName.ConfigureDesignAppBundle_v6+01
         },
-                description = "Activity to run ConfigureDesign script"
+                description = "Activity to run ConfigureDesign script and fetch user parameters"
             };
 
             var json = JsonSerializer.Serialize(payload);
-            Console.WriteLine("📦 Payload Sent:\n" + json); // 👀 Debug print
+            Console.WriteLine("📦 Payload Sent:\n" + json);
 
             var content = new StringContent(json);
             content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
@@ -305,24 +314,27 @@ namespace Synera_Addin
         {
             string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
 
-            // Construct inner object representing the TaskParameters argument
+            // JSON string of TaskParameters, including fileURN and empty parameter list (for now)
             var taskParametersObject = new
             {
                 fileURN = fileUrn,
-                parameters = parameters
+                parameters = new Dictionary<string, string>() // keep empty for now
             };
 
-            // Serialize the taskParametersObject as a JSON string (for the WorkItem payload)
             string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
 
             var workItemPayload = new
             {
                 activityId = fullyQualifiedActivityId,
                 arguments = new Dictionary<string, object>
-        {
-            { "PersonalAccessToken", personalAccessToken },
-            { "TaskParameters", taskParametersJson } // must be a stringified JSON
-        }
+    {
+        { "PersonalAccessToken", new {
+            value = personalAccessToken
+        }},
+        { "TaskParameters", new {
+            value = taskParametersJson
+        }},
+    }
             };
 
             string json = JsonSerializer.Serialize(workItemPayload);
@@ -351,59 +363,66 @@ namespace Synera_Addin
                 return null;
             }
         }
-        public async Task<(string status, string? reportUrl)> CheckWorkItemStatusUntilCompleteAsync(
-    string accessToken,
-    string workItemId,
-    int pollIntervalSeconds = 5,
-    int timeoutMinutes = 10)
+
+        public async Task<(string status, string? reportUrl)> CheckWorkItemStatusAsync(string accessToken, string workItemId)
         {
             string url = $"https://developer.api.autodesk.com/da/us-east/v3/workitems/{workItemId}";
-            var timeoutAt = DateTime.UtcNow.AddMinutes(timeoutMinutes);
 
-            while (true)
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            var response = await _client.SendAsync(request);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
             {
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-
-                var response = await _client.SendAsync(request);
-                string responseBody = await response.Content.ReadAsStringAsync();
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    Console.WriteLine($"❌ Failed to check WorkItem status: {response.StatusCode}");
-                    Console.WriteLine("📥 Error Response: " + responseBody);
-                    throw new HttpRequestException("Failed to check WorkItem status.");
-                }
-
-                using var doc = JsonDocument.Parse(responseBody);
-                string status = doc.RootElement.GetProperty("status").GetString() ?? "unknown";
-                string? reportUrl = doc.RootElement.TryGetProperty("reportUrl", out var reportProp)
-                                    ? reportProp.GetString()
-                                    : null;
-
-                Console.WriteLine($"⏱️ Current Status: {status}");
-
-                // If the work item has finished, return the result
-                if (status is "success" or "failed" or "cancelled")
-                {
-                    Console.WriteLine($"✅ Final Status: {status}");
-                    if (!string.IsNullOrEmpty(reportUrl))
-                        Console.WriteLine($"📄 Report URL: {reportUrl}");
-                    return (status, reportUrl);
-                }
-
-                // If we’ve exceeded timeout, abort
-                if (DateTime.UtcNow > timeoutAt)
-                {
-                    Console.WriteLine("⏰ Timeout while waiting for WorkItem to complete.");
-                    return ("timeout", null);
-                }
-
-                // Wait before polling again
-                await Task.Delay(pollIntervalSeconds * 1000);
+                Console.WriteLine($"❌ Failed to check WorkItem status: {response.StatusCode}");
+                Console.WriteLine("📥 Error Response: " + responseBody);
+                throw new HttpRequestException("Failed to check WorkItem status.");
             }
+
+            using var doc = JsonDocument.Parse(responseBody);
+            string status = doc.RootElement.GetProperty("status").GetString() ?? "unknown";
+            string? reportUrl = doc.RootElement.TryGetProperty("reportUrl", out var reportProp)
+                                ? reportProp.GetString()
+                                : null;
+
+            Console.WriteLine($"✅ WorkItem Status: {status}");
+            if (!string.IsNullOrEmpty(reportUrl))
+                Console.WriteLine($"📄 Report URL: {reportUrl}");
+
+            return (status, reportUrl);
         }
+
+        public async Task<Dictionary<string, string>> FetchOutputJsonFromReportAsync(string reportUrl)
+        {
+            using var client = new HttpClient();
+
+            // Download report JSON from the URL
+            var jsonResponse = await client.GetStringAsync(reportUrl);
+            jsonResponse = await client.GetStringAsync(reportUrl);
+            using var doc = JsonDocument.Parse(jsonResponse);
+
+            // Try to get the 'result' property
+            if (!doc.RootElement.TryGetProperty("result", out var resultElement))
+                throw new Exception("❌ Missing 'result' field in report JSON.");
+
+            // 'result' is a JSON string like: "{\"param\":\"value\"}"
+            var resultJson = resultElement.GetString();
+
+            if (string.IsNullOrWhiteSpace(resultJson))
+                throw new Exception("❌ 'result' field is empty.");
+
+            // Parse the inner JSON string to Dictionary
+            var resultDict = JsonSerializer.Deserialize<Dictionary<string, string>>(resultJson);
+
+            if (resultDict == null)
+                throw new Exception("❌ Failed to parse 'result' JSON string.");
+
+            return resultDict;
+        }
+
 
         private class UploadParameters
         {

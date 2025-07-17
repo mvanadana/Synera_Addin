@@ -17,6 +17,7 @@ using System.Runtime.InteropServices;
 using System.Security.Policy;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Path = System.IO.Path;
 
@@ -137,10 +138,10 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
            var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
             string accessToken = _accessToken;
-            string appBundleId = "ConfigureDesignAppBundle_v31";
+            string appBundleId = "ConfigureDesignAppBundle_v42";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
-            string activityId = "ConfigureDesignActivity_19";
-            string aliasId = "0174";
+            string activityId = "ConfigureDesignActivity_30";
+            string aliasId = "0176";
             string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
             string pAT = "f510483dedea50c59cc2e749a416dd6813c70f00";
             string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
@@ -166,12 +167,17 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId+"mycurrentAlias");
             var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
-            var result = await uploader.CheckWorkItemStatusUntilCompleteAsync(accessToken, workItemId);
-
+            var result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+            while (result.status == "inprogress")
+            {
+                 result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+            }
+            
             Console.WriteLine("Status: " + result.status);
             if (!string.IsNullOrEmpty(result.reportUrl))
             {
                 Console.WriteLine("Download Report: " + result.reportUrl);
+                var userParameter = await uploader.FetchOutputJsonFromReportAsync( result.reportUrl);
             }
 
             return JObject.FromObject(new
