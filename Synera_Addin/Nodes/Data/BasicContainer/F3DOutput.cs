@@ -134,19 +134,20 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 ;
             }
 
-            var decodedURN = ExtractAndDecodeUrnFromUrl(urnOfFile);
-            
+           var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
+            var decodedURN = decodedURNlist[1];
             string accessToken = _accessToken;
-            string appBundleId = "ConfigureDesignAppBundle_v24";
+            string appBundleId = "ConfigureDesignAppBundle_v31";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
-            string activityId = "ConfigureDesignActivity_12";
-            string aliasId = "0168";
+            string activityId = "ConfigureDesignActivity_19";
+            string aliasId = "0174";
             string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
             string pAT = "f510483dedea50c59cc2e749a416dd6813c70f00";
             string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
             var parameters = new Dictionary<string, string>
 {
-    { "d3", "40mm" }
+    { "Extrudedistance", "40" },
+                {"TaperAngle_user","30" }
 };
             var uploader = new ForgeAppBundleUploader();
 
@@ -165,19 +166,14 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId+"mycurrentAlias");
             var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
+            var result = await uploader.CheckWorkItemStatusUntilCompleteAsync(accessToken, workItemId);
 
-            //string? status = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+            Console.WriteLine("Status: " + result.status);
+            if (!string.IsNullOrEmpty(result.reportUrl))
+            {
+                Console.WriteLine("Download Report: " + result.reportUrl);
+            }
 
-            //if (status == "success")
-            //{
-            //    Console.WriteLine("🎉 WorkItem completed successfully!");
-            //}
-            //else if (status == "inprogress" || status == "pending")
-            //{
-            //    Console.WriteLine("⏳ WorkItem is still running...");
-            //}
-
-            // Dummy result return for now
             return JObject.FromObject(new
             {
                 message = "Token initialized and file ready for upload."
@@ -185,32 +181,56 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             });
         }
 
-        public static string ExtractAndDecodeUrnFromUrl(string url)
+        public static List<string> ExtractAndDecodeUrnFromUrl(string url)
         {
-            if (string.IsNullOrWhiteSpace(url))
-                throw new ArgumentException("Input URL cannot be null or empty.");
+            var decodedUrns = new List<string>();
 
-            var matches = Regex.Matches(url, @"(?<=/)([a-zA-Z0-9_-]{20,})(?=/|$)");
+            // Find all base64-ish looking strings in the URL path
+            var matches = Regex.Matches(url, @"dXJu[^/]+");
 
             foreach (Match match in matches)
             {
-                string candidate = match.Value;
                 try
                 {
-                    string decoded = DecodeBase64Urn(candidate);
+                    string base64 = match.Value;
 
+                    // Decode base64-URL-safe string
+                    string decoded = DecodeBase64LikeUrn(base64);
+
+                    // Only include valid Autodesk URNs
                     if (decoded.StartsWith("urn:adsk"))
-                        return decoded;
+                    {
+                        decodedUrns.Add(decoded);
+                    }
                 }
                 catch
                 {
-                    // Ignore
+                    // Ignore invalid base64 strings
                 }
             }
 
-            throw new InvalidOperationException("No valid URN found in the URL.");
+            return decodedUrns;
         }
 
+        private static string DecodeBase64LikeUrn(string encodedUrn)
+        {
+            // Autodesk Forge URNs are prefixed with dXJu (which is "urn" in base64)
+            // Trim the prefix if needed
+            string base64 = encodedUrn;
+
+            // Replace URL-safe characters
+            base64 = base64.Replace('-', '+').Replace('_', '/');
+
+            // Add base64 padding if needed
+            int padding = 4 - (base64.Length % 4);
+            if (padding != 4)
+            {
+                base64 += new string('=', padding);
+            }
+
+            byte[] data = Convert.FromBase64String(base64);
+            return Encoding.UTF8.GetString(data);
+        }
         public static string DecodeBase64Urn(string base64)
         {
             // Add padding if needed

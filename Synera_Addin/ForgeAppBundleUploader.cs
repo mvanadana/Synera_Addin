@@ -1,11 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Threading.Tasks;
-using System.Text.Json;
 using System.IO;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
 
 
 namespace Synera_Addin
@@ -304,14 +305,15 @@ namespace Synera_Addin
         {
             string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
 
-            // Construct TaskParameters JSON as string
-            var taskParams = new
+            // Construct inner object representing the TaskParameters argument
+            var taskParametersObject = new
             {
                 fileURN = fileUrn,
                 parameters = parameters
             };
 
-            string taskParamsJson = JsonSerializer.Serialize(taskParams);
+            // Serialize the taskParametersObject as a JSON string (for the WorkItem payload)
+            string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
 
             var workItemPayload = new
             {
@@ -319,18 +321,20 @@ namespace Synera_Addin
                 arguments = new Dictionary<string, object>
         {
             { "PersonalAccessToken", personalAccessToken },
-            { "TaskParameters", taskParamsJson }
+            { "TaskParameters", taskParametersJson } // must be a stringified JSON
         }
             };
 
             string json = JsonSerializer.Serialize(workItemPayload);
-            var content = new StringContent(json);
-            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            Console.WriteLine("📦 Payload Sent:\n" + json);
 
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            _client.DefaultRequestHeaders.Clear();
             _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
             var response = await _client.PostAsync(url, content);
-            var responseBody = await response.Content.ReadAsStringAsync();
+            string responseBody = await response.Content.ReadAsStringAsync();
 
             if (response.IsSuccessStatusCode)
             {
@@ -345,6 +349,59 @@ namespace Synera_Addin
                 Console.WriteLine($"❌ Failed to create WorkItem: {response.StatusCode}");
                 Console.WriteLine("📥 Error Details: " + responseBody);
                 return null;
+            }
+        }
+        public async Task<(string status, string? reportUrl)> CheckWorkItemStatusUntilCompleteAsync(
+    string accessToken,
+    string workItemId,
+    int pollIntervalSeconds = 5,
+    int timeoutMinutes = 10)
+        {
+            string url = $"https://developer.api.autodesk.com/da/us-east/v3/workitems/{workItemId}";
+            var timeoutAt = DateTime.UtcNow.AddMinutes(timeoutMinutes);
+
+            while (true)
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+                var response = await _client.SendAsync(request);
+                string responseBody = await response.Content.ReadAsStringAsync();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"❌ Failed to check WorkItem status: {response.StatusCode}");
+                    Console.WriteLine("📥 Error Response: " + responseBody);
+                    throw new HttpRequestException("Failed to check WorkItem status.");
+                }
+
+                using var doc = JsonDocument.Parse(responseBody);
+                string status = doc.RootElement.GetProperty("status").GetString() ?? "unknown";
+                string? reportUrl = doc.RootElement.TryGetProperty("reportUrl", out var reportProp)
+                                    ? reportProp.GetString()
+                                    : null;
+
+                Console.WriteLine($"⏱️ Current Status: {status}");
+
+                // If the work item has finished, return the result
+                if (status is "success" or "failed" or "cancelled")
+                {
+                    Console.WriteLine($"✅ Final Status: {status}");
+                    if (!string.IsNullOrEmpty(reportUrl))
+                        Console.WriteLine($"📄 Report URL: {reportUrl}");
+                    return (status, reportUrl);
+                }
+
+                // If we’ve exceeded timeout, abort
+                if (DateTime.UtcNow > timeoutAt)
+                {
+                    Console.WriteLine("⏰ Timeout while waiting for WorkItem to complete.");
+                    return ("timeout", null);
+                }
+
+                // Wait before polling again
+                await Task.Delay(pollIntervalSeconds * 1000);
             }
         }
 
