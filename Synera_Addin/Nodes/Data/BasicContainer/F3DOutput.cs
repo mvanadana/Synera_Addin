@@ -135,15 +135,15 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             }
 
             var decodedURN = ExtractAndDecodeUrnFromUrl(urnOfFile);
-
+            
             string accessToken = _accessToken;
-            string appBundleId = "ConfigureDesignAppBundle_v60";
+            string appBundleId = "ConfigureDesignAppBundle_v24";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
-            string activityId = "ConfigureDesignActivity";
-            string aliasId = "0156";
+            string activityId = "ConfigureDesignActivity_12";
+            string aliasId = "0168";
             string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
-            string pAT = "7b0148b7e25f90282194409afb6ff8b339ca1829";
-            string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId;
+            string pAT = "f510483dedea50c59cc2e749a416dd6813c70f00";
+            string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
             var parameters = new Dictionary<string, string>
 {
     { "d3", "40mm" }
@@ -166,7 +166,16 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId+"mycurrentAlias");
             var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
 
-            
+            //string? status = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+
+            //if (status == "success")
+            //{
+            //    Console.WriteLine("🎉 WorkItem completed successfully!");
+            //}
+            //else if (status == "inprogress" || status == "pending")
+            //{
+            //    Console.WriteLine("⏳ WorkItem is still running...");
+            //}
 
             // Dummy result return for now
             return JObject.FromObject(new
@@ -175,7 +184,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 
             });
         }
-
 
         public static string ExtractAndDecodeUrnFromUrl(string url)
         {
@@ -217,7 +225,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             byte[] bytes = Convert.FromBase64String(base64);
             return Encoding.UTF8.GetString(bytes);
         }
-
 
         public static async Task<string> FollowRedirectAndGetFinalUrlAsync(string shortUrl)
         {
