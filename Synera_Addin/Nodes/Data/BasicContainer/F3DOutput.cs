@@ -1,8 +1,10 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Synera.Core;
 using Synera.Core.Graph.Data;
 using Synera.Core.Graph.Enums;
 using Synera.Core.Implementation.Graph;
+using Synera.Core.Implementation.Graph.Data.DataTypes;
 using Synera.Core.Implementation.UI;
 using Synera.DataTypes;
 using Synera.DataTypes.Web;
@@ -10,10 +12,12 @@ using Synera.Localization;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
+using System.Runtime.Serialization;
 using System.Security.Policy;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -49,8 +53,25 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
         private readonly HttpClient _httpClient = new HttpClient();
 
+
         // Computed property to access current token
         private string _accessToken => _tokenInfo?.access_token;
+
+        public class Variable
+        {
+            public string Name { get; set; }
+            public double Value { get; set; }
+        }
+
+        private readonly List<Variable> _nodeVariables = new List<Variable>();
+        private bool _ignoreSolutionExpired;
+
+        [DataMember(Name = "UserParameters")]
+        private Variable[] NodeVariablesSerialized
+        {
+            get => _nodeVariables.ToArray();
+            set => UpdateInputs(value);
+        }
 
         public FusionRun()
             : base(new LocalizableString("Fusion File Upload"))
@@ -113,6 +134,100 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             catch (Exception ex)
             {
                 AddError($"Upload failed: {ex.Message}");
+            }
+        }
+        public override void ExpireSolution()
+        {
+            if (!_ignoreSolutionExpired)
+                base.ExpireSolution();
+        }
+        private void UpdateInputs(IList<Variable> modelVariables)
+        {
+            Document?.UndoRedoManager.OpenTransaction();
+            try
+            {
+                _ignoreSolutionExpired = true;
+                _nodeVariables.Clear();
+
+                // Get names of current dynamic parameters starting from index
+                var oldVariables = InputParameters
+                    .Skip(__inputVariablesStartIndex)
+                    .Select(p => p.Name.Value)
+                    .Distinct()
+                    .ToList();
+
+                // Get names of incoming model variables
+                var newVariables = modelVariables
+                    .Select(v => v.Name)
+                    .Distinct()
+                    .ToList();
+
+                // Compute deltas
+                var toDelete = oldVariables.Except(newVariables).ToList();
+                var toAdd = newVariables.Except(oldVariables).ToList();
+                var toUpdate = oldVariables.Intersect(newVariables).ToList();
+
+                // Remove parameters no longer needed
+                foreach (var name in toDelete)
+                {
+                    var input = InputParameters
+                        .Skip(__inputVariablesStartIndex)
+                        .FirstOrDefault(p => p.Name.Value == name);
+
+                    if (input != null)
+                        RemoveRuntimeParameter(input);
+                }
+
+                // Add new parameters
+                foreach (var name in toAdd)
+                {
+                    var variable = modelVariables.FirstOrDefault(v => v.Name == name);
+                    if (variable == null)
+                        continue;
+
+                    var options = new InputParameterOptions(
+                        name,
+                        new LocalizableString($"Input: {name}"),
+                        typeof(SyneraDouble))
+                    {
+                        DefaultValue = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)),
+                        HasDynamicDefaultData = true
+                    };
+
+                    var param = InputParameterManager.CreateParameter(options);
+                    AddRuntimeParameter(param, InputParameters.Count);
+                    param.CollectData();
+                }
+
+                // Update existing parameters if value changed
+                foreach (var name in toUpdate)
+                {
+                    var input = InputParameters
+                        .Skip(__inputVariablesStartIndex)
+                        .FirstOrDefault(p => p.Name.Value == name);
+
+                    var variable = modelVariables.FirstOrDefault(v => v.Name == name);
+                    if (input == null || variable == null)
+                        continue;
+
+                    var current = ((SyneraDouble)input.DefaultGraphData.GetAllData().Single()).Value;
+                    if (!SyneraMath.EpsilonEquals(current, variable.Value))
+                    {
+                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value));
+                    }
+                }
+
+                // Update internal cache
+                foreach (var variable in modelVariables)
+                {
+                    if (newVariables.Contains(variable.Name))
+                        _nodeVariables.Add(variable);
+                }
+            }
+            finally
+            {
+                Document?.UndoRedoManager.DiscardTransaction();
+                _ignoreSolutionExpired = false;
             }
         }
 
@@ -178,6 +293,25 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             {
                 Console.WriteLine("Download Report: " + result.reportUrl);
                 var userParameter = await uploader.FetchOutputJsonFromReportAsync( result.reportUrl);
+                var modelVariables = new List<Variable>();
+                foreach (var pair in userParameter)  // Assuming JObject
+                {
+                    var match = Regex.Match(pair.Value, @"[-+]?[0-9]*\.?[0-9]+");
+                    if (match.Success && double.TryParse(match.Value, out double val))
+                    {
+                        modelVariables.Add(new Variable { Name = pair.Key, Value = val });
+                    }
+                }
+
+                var dispatcher = Synera.Wpf.Common.WindowsManager.MainWindow?.Dispatcher;
+                if (dispatcher == null)
+                {
+                    UpdateInputs(modelVariables);
+                }
+                else
+                {
+                    dispatcher.Invoke(() => UpdateInputs(modelVariables));
+                }
             }
 
             return JObject.FromObject(new
