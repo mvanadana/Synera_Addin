@@ -43,7 +43,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         private const string __bucketKey = "aayush-08072025-joshi";
         private const string __nickName = "Synera_NickName";
         private const string __region = "us-east";
-        private const int __inputVariablesStartIndex = 3;
+        private const int __inputVariablesStartIndex = 2;
 
         private string clientId;
         private string clientSecret;
@@ -115,7 +115,15 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             clientId = authDynamic.AuthManager.Options.ClientId;
             clientSecret = authDynamic.AuthManager.Options.ClientSecret;
             string url = UrlPath.Value;
-
+            var parameters = new Dictionary<string, string>();
+            for (int i = __inputVariablesStartIndex; i < InputParameters.Count; i++)
+            {
+                var param = InputParameters[i];
+                if (dataAccess.GetData(i, out SyneraDouble val))
+                {
+                    parameters[param.Name.Value] = val.Value.ToString();
+                }
+            }
             try
             {
                 var inputValues = new List<double>();
@@ -128,7 +136,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 }
                
                
-                var result = RunFusionAutomationAsync(url, inputValues, new Progress<double>()).GetAwaiter().GetResult();
+                var result = RunFusionAutomationAsync(url, parameters, inputValues, new Progress<double>()).GetAwaiter().GetResult();
                 dataAccess.SetData(0, result.ToString());
             }
             catch (Exception ex)
@@ -149,79 +157,56 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 _ignoreSolutionExpired = true;
                 _nodeVariables.Clear();
 
-                // Get names of current dynamic parameters starting from index
-                var oldVariables = InputParameters
-                    .Skip(__inputVariablesStartIndex)
-                    .Select(p => p.Name.Value)
-                    .Distinct()
-                    .ToList();
+                var oldVariables = InputParameters.Skip(__inputVariablesStartIndex).Select(c => c.Name.Value).ToList();
+                var newVariables = modelVariables.Select(c => c.Name).ToList();
 
-                // Get names of incoming model variables
-                var newVariables = modelVariables
-                    .Select(v => v.Name)
-                    .Distinct()
-                    .ToList();
-
-                // Compute deltas
                 var toDelete = oldVariables.Except(newVariables).ToList();
                 var toAdd = newVariables.Except(oldVariables).ToList();
                 var toUpdate = oldVariables.Intersect(newVariables).ToList();
 
-                // Remove parameters no longer needed
                 foreach (var name in toDelete)
                 {
-                    var input = InputParameters
-                        .Skip(__inputVariablesStartIndex)
-                        .FirstOrDefault(p => p.Name.Value == name);
-
+                    var input = InputParameters.Skip(__inputVariablesStartIndex).FirstOrDefault(p => p.Name == name);
                     if (input != null)
                         RemoveRuntimeParameter(input);
                 }
 
-                // Add new parameters
+                // ADD new parameters
                 foreach (var name in toAdd)
                 {
-                    var variable = modelVariables.FirstOrDefault(v => v.Name == name);
-                    if (variable == null)
-                        continue;
-
-                    var options = new InputParameterOptions(
-                        name,
-                        new LocalizableString($"Input: {name}"),
-                        typeof(SyneraDouble))
+                    var variable = modelVariables.First(p => p.Name == name);
+                    var options = new InputParameterOptions(name, new LocalizableString($"Input: {name}"), typeof(SyneraDouble))
                     {
                         DefaultValue = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)),
-                        HasDynamicDefaultData = true
+                        HasDynamicDefaultData = true 
                     };
 
                     var param = InputParameterManager.CreateParameter(options);
                     AddRuntimeParameter(param, InputParameters.Count);
-                    param.CollectData();
+
+                    param.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value));
+                    
+                    param.CollectData(); 
                 }
 
-                // Update existing parameters if value changed
+                // UPDATE existing values
                 foreach (var name in toUpdate)
                 {
-                    var input = InputParameters
-                        .Skip(__inputVariablesStartIndex)
-                        .FirstOrDefault(p => p.Name.Value == name);
+                    var input = InputParameters.Skip(__inputVariablesStartIndex).FirstOrDefault(p => p.Name == name);
+                    var variable = modelVariables.First(p => p.Name == name);
 
-                    var variable = modelVariables.FirstOrDefault(v => v.Name == name);
-                    if (input == null || variable == null)
-                        continue;
+                    var defaultVal = ((SyneraDouble)input.DefaultGraphData.GetAllData().First()).Value;
 
-                    var current = ((SyneraDouble)input.DefaultGraphData.GetAllData().Single()).Value;
-                    if (!SyneraMath.EpsilonEquals(current, variable.Value))
+                    if (!SyneraMath.EpsilonEquals(defaultVal, variable.Value))
                     {
-                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value));
+                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)); // 🔥
                     }
                 }
 
-                // Update internal cache
+                // Sync internal cache
                 foreach (var variable in modelVariables)
                 {
-                    if (newVariables.Contains(variable.Name))
-                        _nodeVariables.Add(variable);
+                    _nodeVariables.Add(variable);
                 }
             }
             finally
@@ -231,8 +216,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             }
         }
 
-        public async Task<JObject> RunFusionAutomationAsync(
-            string urnOfFile,
+        public async Task<JObject> RunFusionAutomationAsync( string urnOfFile,Dictionary<string, string> parameters,
             List<double> values,
             IProgress<double> progress)
         {
@@ -253,18 +237,14 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
            var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
             string accessToken = _accessToken;
-            string appBundleId = "ConfigureDesignAppBundle_v42";
+            string appBundleId = "ConfigureDesignAppBundle_v43";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
-            string activityId = "ConfigureDesignActivity_30";
-            string aliasId = "0176";
+            string activityId = "ConfigureDesignActivity_31";
+            string aliasId = "0177";
             string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
             string pAT = "f510483dedea50c59cc2e749a416dd6813c70f00";
             string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
-            var parameters = new Dictionary<string, string>
-{
-    { "Extrudedistance", "40" },
-                {"TaperAngle_user","30" }
-};
+            
             var uploader = new ForgeAppBundleUploader();
 
             var metadata = await uploader.RegisterAppBundleAsync(accessToken, appBundleId, zipPath);

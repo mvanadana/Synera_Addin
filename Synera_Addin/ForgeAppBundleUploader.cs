@@ -318,7 +318,7 @@ namespace Synera_Addin
             var taskParametersObject = new
             {
                 fileURN = fileUrn,
-                parameters = new Dictionary<string, string>() // keep empty for now
+                parameters = parameters// keep empty for now
             };
 
             string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
