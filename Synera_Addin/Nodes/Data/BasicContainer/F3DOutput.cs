@@ -74,11 +74,11 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         }
 
         public FusionRun()
-            : base(new LocalizableString("Fusion File Upload"))
+            : base(new LocalizableString("Run Fusion"))
         {
             Category = Categories.Data;
             Subcategory = Subcategories.Data.BasicContainer;
-            Description = new LocalizableString("Uploads Fusion .f3d file to Autodesk Forge.");
+            Description = new LocalizableString("Update the user parameters of Fusion file.");
             GuiPriority = 1;
 
             InputParameterManager.AddParameter<IAuthentication>(
