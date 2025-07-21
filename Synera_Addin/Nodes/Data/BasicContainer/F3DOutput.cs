@@ -238,12 +238,12 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
            var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
             string accessToken = _accessToken;
-            string appBundleId = "ConfigureDesignAppBundle_v43";
-            string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
-            string activityId = "ConfigureDesignActivity_31";
-            string aliasId = "0177";
+            string appBundleId = "ConfigureDesignAppBundle_v110";
+            string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
+            string activityId = "ConfigureDesignActivity_110";
+            string aliasId = "0182";
             string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
-            string pAT = "f510483dedea50c59cc2e749a416dd6813c70f00";
+            string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
             string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
             
             var uploader = new ForgeAppBundleUploader();
