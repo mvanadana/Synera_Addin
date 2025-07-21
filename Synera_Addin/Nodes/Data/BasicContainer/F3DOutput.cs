@@ -23,6 +23,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Threading;
 using Path = System.IO.Path;
 
 namespace Synera_Addin.Nodes.Data.BasicContainer
@@ -52,9 +53,8 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         private DateTime _tokenAcquiredAt;
 
         private readonly HttpClient _httpClient = new HttpClient();
+        public event EventHandler ParametersUpdated;
 
-
-        // Computed property to access current token
         private string _accessToken => _tokenInfo?.access_token;
 
         public class Variable
@@ -199,7 +199,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
                     if (!SyneraMath.EpsilonEquals(defaultVal, variable.Value))
                     {
-                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)); // 🔥
+                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)); 
                     }
                 }
 
@@ -208,6 +208,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 {
                     _nodeVariables.Add(variable);
                 }
+                ParametersUpdated?.Invoke(this, EventArgs.Empty);
             }
             finally
             {

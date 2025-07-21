@@ -4,6 +4,7 @@ using Synera.Wpf.DirectX.Canvas.Controls.Node;
 using Synera.Wpf.DirectX.Canvas.Controls.NodeControls.Builders;
 using Synera.Wpf.DirectX.Controls;
 using Synera.Wpf.DirectX.Extensions;
+using System;
 using System.Windows.Controls;
 using StackPanel = Synera.Wpf.DirectX.Controls.StackPanel;
 
@@ -17,6 +18,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         {
             node.ParameterAdded += OnParametersChanged;
             node.ParameterRemoved += OnParametersChanged;
+            node.ParametersUpdated += OnParametersChanged;
         }
 
         protected override void OnUnloaded()
@@ -28,7 +30,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
         protected override void ConfigureControls(StackPanel container, Builder builder)
         {
-            // 🔒 Fixed inputs (Authentication, URL)
             var staticInputs = new StackPanel { Orientation = Orientation.Vertical };
 
             if (Node.InputParameters.Count > 0)
@@ -43,14 +44,12 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             container.AddChild(expander);
 
-            // 🔁 Dynamic user parameters
             var dynamicInputs = new StackPanel { Orientation = Orientation.Vertical };
 
-            const int dynamicStartIndex = 2; // Update this if your FusionRun node changes its index definition
+            const int dynamicStartIndex = 2; 
 
             for (int i = dynamicStartIndex; i < Node.InputParameters.Count; i++)
             {
-                // 🛡️ Safety check
                 if (i >= 0 && i < Node.InputParameters.Count)
                 {
                     var paramControl = builder.CreateRegularInput(i);
@@ -68,7 +67,12 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
         private void OnParametersChanged(object sender, Synera.Core.Events.ParameterEventArgs e)
         {
-            Dispatcher.Invoke(InvalidateCustomContent); // Redraw the panel safely
+            Dispatcher.Invoke(InvalidateCustomContent);
         }
+        private void OnParametersChanged(object sender, EventArgs e)
+        {
+           // Dispatcher.Invoke(InvalidateCustomContent); 
+        }
+
     }
 }
