@@ -3,28 +3,26 @@ using Newtonsoft.Json.Linq;
 using Synera.Core;
 using Synera.Core.Graph.Data;
 using Synera.Core.Graph.Enums;
+using Synera.Core.Implementation.ApplicationService;
 using Synera.Core.Implementation.Graph;
 using Synera.Core.Implementation.Graph.Data.DataTypes;
 using Synera.Core.Implementation.UI;
 using Synera.DataTypes;
 using Synera.DataTypes.Web;
+using Synera.Kernels.Geometry;
+using Synera.Kernels.Translators;
 using Synera.Localization;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
-using System.Security.Policy;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Threading;
-using Path = System.IO.Path;
 
 namespace Synera_Addin.Nodes.Data.BasicContainer
 {
@@ -59,8 +57,14 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
         public class Variable
         {
-            public string Name { get; set; }
-            public double Value { get; set; }
+            public string Name
+            {
+                get; set;
+            }
+            public double Value
+            {
+                get; set;
+            }
         }
 
         private readonly List<Variable> _nodeVariables = new List<Variable>();
@@ -134,8 +138,8 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                         inputValues.Add(val);
                     }
                 }
-               
-               
+
+
                 var result = RunFusionAutomationAsync(url, parameters, inputValues, new Progress<double>()).GetAwaiter().GetResult();
                 dataAccess.SetData(0, result.ToString());
             }
@@ -178,15 +182,15 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                     var options = new InputParameterOptions(name, new LocalizableString($"Input: {name}"), typeof(SyneraDouble))
                     {
                         DefaultValue = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)),
-                        HasDynamicDefaultData = true 
+                        HasDynamicDefaultData = true
                     };
 
                     var param = InputParameterManager.CreateParameter(options);
                     AddRuntimeParameter(param, InputParameters.Count);
 
                     param.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value));
-                    
-                    param.CollectData(); 
+
+                    param.CollectData();
                 }
 
                 // UPDATE existing values
@@ -199,7 +203,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
                     if (!SyneraMath.EpsilonEquals(defaultVal, variable.Value))
                     {
-                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value)); 
+                        input.DefaultGraphData = new DataTree<IGraphDataType>(new SyneraDouble(variable.Value));
                     }
                 }
 
@@ -217,7 +221,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             }
         }
 
-        public async Task<JObject> RunFusionAutomationAsync( string urnOfFile,Dictionary<string, string> parameters,
+        public async Task<JObject> RunFusionAutomationAsync(string urnOfFile, Dictionary<string, string> parameters,
             List<double> values,
             IProgress<double> progress)
         {
@@ -235,17 +239,19 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 ;
             }
 
-           var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
+            var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
+
+            string aliasId = "0185";
             string accessToken = _accessToken;
-            string appBundleId = "ConfigureDesignAppBundle_v110";
-            string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
-            string activityId = "ConfigureDesignActivity_110";
-            string aliasId = "0182";
-            string appBundleQualifiedId = __nickName + "."+appBundleId+"+"+ aliasId;
+            string activityId = "ConfigureDesignActivity_113";
+            string appBundleId = "ConfigureDesignAppBundle_v113";
             string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
+            string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
+
+            string appBundleQualifiedId = __nickName + "." + appBundleId + "+" + aliasId;
             string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
-            
+
             var uploader = new ForgeAppBundleUploader();
 
             var metadata = await uploader.RegisterAppBundleAsync(accessToken, appBundleId, zipPath);
@@ -261,19 +267,19 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             await uploader.CreateActivityAsync(accessToken, activityId, appBundleQualifiedId);
 
-            await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId+"mycurrentAlias");
+            await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId + "mycurrentAlias");
             var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
             var result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
             while (result.status == "inprogress")
             {
-                 result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+                result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
             }
-            
+
             Console.WriteLine("Status: " + result.status);
             if (!string.IsNullOrEmpty(result.reportUrl))
             {
                 Console.WriteLine("Download Report: " + result.reportUrl);
-                var userParameter = await uploader.FetchOutputJsonFromReportAsync( result.reportUrl);
+                var userParameter = await uploader.FetchOutputJsonFromReportAsync(result.reportUrl);
                 var modelVariables = new List<Variable>();
                 foreach (var pair in userParameter)  // Assuming JObject
                 {
@@ -298,7 +304,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             return JObject.FromObject(new
             {
                 message = "Token initialized and file ready for upload."
-                
+
             });
         }
 
@@ -473,8 +479,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 return false;
             }
         }
-
-        
 
     }
 }

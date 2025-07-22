@@ -1,9 +1,6 @@
-﻿using Synera.Core.Implementation.Graph;
-using Synera.Wpf.DirectX.Attributes;
+﻿using Synera.Wpf.DirectX.Attributes;
 using Synera.Wpf.DirectX.Canvas.Controls.Node;
 using Synera.Wpf.DirectX.Canvas.Controls.NodeControls.Builders;
-using Synera.Wpf.DirectX.Controls;
-using Synera.Wpf.DirectX.Extensions;
 using System;
 using System.Windows.Controls;
 using StackPanel = Synera.Wpf.DirectX.Controls.StackPanel;
@@ -46,7 +43,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             var dynamicInputs = new StackPanel { Orientation = Orientation.Vertical };
 
-            const int dynamicStartIndex = 2; 
+            const int dynamicStartIndex = 2;
 
             for (int i = dynamicStartIndex; i < Node.InputParameters.Count; i++)
             {
@@ -56,7 +53,6 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                     dynamicInputs.AddChild(paramControl);
                 }
             }
-
 
             var dynExpander = builder.CreateExpander(dynamicInputs, "User Parameters")
                 .WithText("Fusion User Parameters")
@@ -71,7 +67,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         }
         private void OnParametersChanged(object sender, EventArgs e)
         {
-           // Dispatcher.Invoke(InvalidateCustomContent); 
+            // Dispatcher.Invoke(InvalidateCustomContent); 
         }
 
     }

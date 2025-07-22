@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace Synera_Addin
 {
-    
+
     public class ForgeAppBundleUploader
     {
         private readonly HttpClient _client;
@@ -426,8 +426,14 @@ namespace Synera_Addin
 
         private class UploadParameters
         {
-            public string endpointURL { get; set; }
-            public Dictionary<string, string> formData { get; set; }
+            public string endpointURL
+            {
+                get; set;
+            }
+            public Dictionary<string, string> formData
+            {
+                get; set;
+            }
         }
 
         public class UploadAppBundleMetadata
@@ -435,7 +441,10 @@ namespace Synera_Addin
             public string EndpointUrl { get; set; } = "";
             public Dictionary<string, string> FormData { get; set; } = new();
             public string AppBundleId { get; set; } = "";
-            public int Version { get; set; }
+            public int Version
+            {
+                get; set;
+            }
         }
 
     }
