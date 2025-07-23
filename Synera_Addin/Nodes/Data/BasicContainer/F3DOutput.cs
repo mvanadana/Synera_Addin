@@ -4,6 +4,7 @@ using Synera.Core;
 using Synera.Core.Graph.Data;
 using Synera.Core.Graph.Enums;
 using Synera.Core.Implementation.ApplicationService;
+using Synera.Core.Implementation.ApplicationService.Settings.CustomProperties;
 using Synera.Core.Implementation.Graph;
 using Synera.Core.Implementation.Graph.Data.DataTypes;
 using Synera.Core.Implementation.UI;
@@ -14,6 +15,7 @@ using Synera.Kernels.Translators;
 using Synera.Localization;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -95,10 +97,10 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 new LocalizableString("URL of the .f3d file."),
                 ParameterAccess.Item);
 
-            OutputParameterManager.AddParameter<SyneraString>(
+            OutputParameterManager.AddParameter<IBody>(
                 new LocalizableString("Bodies/Parameters"),
                 new LocalizableString("Bodies/properties of the uploaded file"),
-                ParameterAccess.Item);
+                ParameterAccess.List);
         }
 
         protected override void SolveInstance(IDataAccess dataAccess)
@@ -141,7 +143,19 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
 
                 var result = RunFusionAutomationAsync(url, parameters, inputValues, new Progress<double>()).GetAwaiter().GetResult();
-                dataAccess.SetData(0, result.ToString());
+
+                string decodedURN = ExtractAndDecodeUrnFromUrl(url).FirstOrDefault();
+                string stepFilePath = ExportStepFileAsync(_accessToken, decodedURN, parameters).GetAwaiter().GetResult();
+
+                IGeometryImportTranslator translator = Application.Current.TranslatorManager
+                    .Get<IGeometryImportTranslator>(t => t.IsSupportedImportFormat(stepFilePath));
+                if (translator == null)
+                    throw new InvalidOperationException("The file format is not supported.");
+
+                IBody[] bodies = translator.ImportBodies(stepFilePath);
+                dataAccess.SetListData(0, bodies.ToList());
+
+
             }
             catch (Exception ex)
             {
@@ -241,39 +255,41 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
             var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
-
-            string aliasId = "0185";
+           
+            #region App bundle and activity for fetching the user defined parameters
             string accessToken = _accessToken;
-            string activityId = "ConfigureDesignActivity_113";
-            string appBundleId = "ConfigureDesignAppBundle_v113";
-            string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
-            string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
+            string aliasIdForFetchingUserDefinedParameters = "0185";
+            string activityIDForFetchingUserDefinedParameters = "ConfigureDesignActivity_113";
+            string appBundleIdForFetchingUserDefinedParameters = "ConfigureDesignAppBundle_v113";
+            string pATForFetchingUserDefinedParameters = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
+            string zipPathForFetchingUserDefinedParameters = @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
 
-            string appBundleQualifiedId = __nickName + "." + appBundleId + "+" + aliasId;
-            string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
+            string appBundleQualifiedId = __nickName + "." + appBundleIdForFetchingUserDefinedParameters + "+" + aliasIdForFetchingUserDefinedParameters;
+            string fullyQualifiedActivityId = __nickName + "." + activityIDForFetchingUserDefinedParameters + "+" + aliasIdForFetchingUserDefinedParameters + "mycurrentAlias";
 
             var uploader = new ForgeAppBundleUploader();
 
-            var metadata = await uploader.RegisterAppBundleAsync(accessToken, appBundleId, zipPath);
+            var metadata = await uploader.RegisterAppBundleAsync(accessToken, appBundleIdForFetchingUserDefinedParameters, zipPathForFetchingUserDefinedParameters);
 
             if (metadata != null)
             {
-                bool uploaded = await uploader.UploadZipToS3Async(metadata, zipPath);
+                bool uploaded = await uploader.UploadZipToS3Async(metadata, zipPathForFetchingUserDefinedParameters);
                 if (uploaded)
                 {
-                    await uploader.CreateAppBundleAliasAsync(accessToken, appBundleId, aliasId, metadata.Version);
+                    await uploader.CreateAppBundleAliasAsync(accessToken, appBundleIdForFetchingUserDefinedParameters, aliasIdForFetchingUserDefinedParameters, metadata.Version);
                 }
             }
 
-            await uploader.CreateActivityAsync(accessToken, activityId, appBundleQualifiedId);
+            await uploader.CreateActivityAsync(accessToken, activityIDForFetchingUserDefinedParameters, appBundleQualifiedId);
 
-            await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId + "mycurrentAlias");
-            var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
+            await uploader.CreateActivityAliasAsync(accessToken, activityIDForFetchingUserDefinedParameters, 1, aliasIdForFetchingUserDefinedParameters + "mycurrentAlias");
+            var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pATForFetchingUserDefinedParameters, decodedURN, parameters);
             var result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
             while (result.status == "inprogress")
             {
                 result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
             }
+            #endregion
 
             Console.WriteLine("Status: " + result.status);
             if (!string.IsNullOrEmpty(result.reportUrl))
@@ -478,6 +494,61 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 Console.WriteLine($"❌ Failed to set nickname: {response.StatusCode} - {responseContent}");
                 return false;
             }
+        }
+        private async Task<string> ExportStepFileAsync(string accessToken, string decodedUrn, Dictionary<string, string> parameters)
+        {
+            string stepOutputUrl = string.Empty;
+
+            string aliasId = "014";
+            string activityID = "ExportStepActivity_14";
+            string appBundleId = "ExportStepAppBundle_1";
+            string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
+            string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ExportStep.zip"; // Contains the AppBundle for exporting STEP
+
+            string appBundleQualifiedId = __nickName + "." + appBundleId + "+" + aliasId;
+            string fullyQualifiedActivityId = __nickName + "." + activityID + "+" + aliasId + "mycurrentAlias";
+
+            var uploader = new ForgeAppBundleUploader();
+
+            var metadata = await uploader.RegisterAppBundleAsync(accessToken, appBundleId, zipPath);
+            if (metadata != null)
+            {
+                bool uploaded = await uploader.UploadZipToS3Async(metadata, zipPath);
+                if (uploaded)
+                {
+                    await uploader.CreateAppBundleAliasAsync(accessToken, appBundleId, aliasId, metadata.Version);
+                }
+            }
+
+            await uploader.CreateActivityAsyncForExport(accessToken, activityID, appBundleQualifiedId);
+            await uploader.CreateActivityAliasAsync(accessToken, activityID, 1, aliasId + "mycurrentAlias");
+
+            // Submit the work item
+            var stepWorkItem = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedUrn, parameters);
+            var result = await uploader.CheckWorkItemStatusAsync(accessToken, stepWorkItem);
+
+           while (result.status == "inprogress")
+            {
+                result = await uploader.CheckWorkItemStatusAsync(accessToken, stepWorkItem);
+            }
+
+            if (!string.IsNullOrEmpty(result.reportUrl))
+            {
+                stepOutputUrl = result.reportUrl;
+            }
+
+            // Download and save to local temp
+            if (!string.IsNullOrEmpty(stepOutputUrl))
+            {
+                string localPath = @"C:\Temp\ExportedFromFusion.step";
+                using var client = new HttpClient();
+                var fileBytes = await client.GetByteArrayAsync(stepOutputUrl);
+                await File.WriteAllBytesAsync(localPath, fileBytes);
+
+                return localPath;
+            }
+
+            throw new Exception("Failed to download STEP file from Design Automation.");
         }
 
     }

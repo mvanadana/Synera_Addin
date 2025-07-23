@@ -21,76 +21,77 @@ namespace Synera_Addin
             _client = new HttpClient();
         }
 
-        public async Task<string?> UploadAppBundleAsync(string accessToken, string zipFilePath)
-        {
-            string registerUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles";
+        //public async Task<string?> UploadAppBundleAsync(string accessToken, string zipFilePath)
+        //{
+        //    string registerUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles";
 
-            var registerPayload = new
-            {
-                id = "ConfigureDesignAppBundle_v5",
-                engine = "Autodesk.Fusion+Latest",
-                description = "My first fusion appbundle based on the latest Fusion engine"
-            };
+        //    var registerPayload = new
+        //    {
+        //        id = "ConfigureDesignAppBundle_v5",
+        //        engine = "Autodesk.Fusion+Latest",
+        //        description = "My first fusion appbundle based on the latest Fusion engine"
+        //    };
 
-            var requestContent = new StringContent(JsonSerializer.Serialize(registerPayload));
-            requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
-            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        //    var requestContent = new StringContent(JsonSerializer.Serialize(registerPayload));
+        //    requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        //    _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-            HttpResponseMessage registerResponse = await _client.PostAsync(registerUrl, requestContent);
+        //    HttpResponseMessage registerResponse = await _client.PostAsync(registerUrl, requestContent);
 
-            // If the appbundle already exists, register a new version
-            if (registerResponse.StatusCode == HttpStatusCode.Conflict)
-            {
-                Console.WriteLine("AppBundle already exists. Registering a new version...");
+        //    // If the appbundle already exists, register a new version
+        //    if (registerResponse.StatusCode == HttpStatusCode.Conflict)
+        //    {
+        //        Console.WriteLine("AppBundle already exists. Registering a new version...");
 
-                string versionUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles/ConfigureDesignAppBundle/versions";
-                registerResponse = await _client.PostAsync(versionUrl, requestContent);
-            }
+        //        string versionUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles/ConfigureDesignAppBundle/versions";
+        //        registerResponse = await _client.PostAsync(versionUrl, requestContent);
+        //    }
 
-            if (!registerResponse.IsSuccessStatusCode)
-            {
-                Console.WriteLine($"Failed to register AppBundle: {registerResponse.StatusCode}");
-                return null;
-            }
+        //    if (!registerResponse.IsSuccessStatusCode)
+        //    {
+        //        Console.WriteLine($"Failed to register AppBundle: {registerResponse.StatusCode}");
+        //        return null;
+        //    }
 
-            string responseString = await registerResponse.Content.ReadAsStringAsync();
-            using JsonDocument doc = JsonDocument.Parse(responseString);
-            JsonElement root = doc.RootElement;
+        //    string responseString = await registerResponse.Content.ReadAsStringAsync();
+        //    using JsonDocument doc = JsonDocument.Parse(responseString);
+        //    JsonElement root = doc.RootElement;
 
-            var uploadParameters = root.GetProperty("uploadParameters");
-            var endpointURL = uploadParameters.GetProperty("endpointURL").GetString();
+        //    var uploadParameters = root.GetProperty("uploadParameters");
+        //    var endpointURL = uploadParameters.GetProperty("endpointURL").GetString();
 
-            var formDataDict = new Dictionary<string, string>();
-            foreach (var prop in uploadParameters.GetProperty("formData").EnumerateObject())
-            {
-                formDataDict[prop.Name] = prop.Value.GetString();
-            }
+        //    var formDataDict = new Dictionary<string, string>();
+        //    foreach (var prop in uploadParameters.GetProperty("formData").EnumerateObject())
+        //    {
+        //        formDataDict[prop.Name] = prop.Value.GetString();
+        //    }
 
-            // Upload the zip file
-            using var uploadClient = new HttpClient();
-            using var multipartContent = new MultipartFormDataContent();
-            foreach (var item in formDataDict)
-            {
-                multipartContent.Add(new StringContent(item.Value), item.Key);
-            }
+        //    // Upload the zip file
+        //    using var uploadClient = new HttpClient();
+        //    using var multipartContent = new MultipartFormDataContent();
+        //    foreach (var item in formDataDict)
+        //    {
+        //        multipartContent.Add(new StringContent(item.Value), item.Key);
+        //    }
 
-            var fileContent = new ByteArrayContent(File.ReadAllBytes(zipFilePath));
-            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-            multipartContent.Add(fileContent, "file", Path.GetFileName(zipFilePath));
+        //    var fileContent = new ByteArrayContent(File.ReadAllBytes(zipFilePath));
+        //    fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+        //    multipartContent.Add(fileContent, "file", Path.GetFileName(zipFilePath));
 
-            var uploadResponse = await uploadClient.PostAsync(endpointURL, multipartContent);
+        //    var uploadResponse = await uploadClient.PostAsync(endpointURL, multipartContent);
 
-            if (uploadResponse.StatusCode == HttpStatusCode.OK)
-            {
-                Console.WriteLine("AppBundle uploaded successfully.");
-                return endpointURL;
-            }
-            else
-            {
-                Console.WriteLine($"Upload failed with status: {uploadResponse.StatusCode}");
-                return null;
-            }
-        }
+        //    if (uploadResponse.StatusCode == HttpStatusCode.OK)
+        //    {
+        //        Console.WriteLine("AppBundle uploaded successfully.");
+        //        return endpointURL;
+        //    }
+        //    else
+        //    {
+        //        Console.WriteLine($"Upload failed with status: {uploadResponse.StatusCode}");
+        //        return null;
+        //    }
+        //}
+
         public async Task<UploadAppBundleMetadata?> RegisterAppBundleAsync(string accessToken, string appBundleId, string zipFilePath)
         {
             string registerUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles";
@@ -274,6 +275,78 @@ namespace Synera_Addin
             }
         }
 
+        public async Task<bool> CreateActivityAsyncForExport(string accessToken, string activityId, string appBundleQualifiedId)
+        {
+            string url = "https://developer.api.autodesk.com/da/us-east/v3/activities";
+
+            var payload = new
+            {
+                id = activityId,
+                engine = "Autodesk.Fusion+Latest",
+                commandLine = new[]
+                {
+            @"$(engine.path)\Fusion360Core.exe --headless /Contents/ExportStep.py"
+        },
+                parameters = new Dictionary<string, object>
+        {
+            {
+                "InputFusionFile", new Dictionary<string, object>
+                {
+                    { "verb", "get" },
+                    { "description", "Input Fusion 360 design" },
+                    { "required", true },
+                    { "localName", "input.f3d" }
+                }
+            },
+            {
+                "PersonalAccessToken", new Dictionary<string, object>
+                {
+                    { "verb", "read" },
+                    { "description", "Fusion personal access token" },
+                    { "required", true }
+                }
+            },
+            {
+                "OutputStepFile", new Dictionary<string, object>
+                {
+                    { "verb", "put" },
+                    { "localName", "output.step" },
+                    { "description", "Exported STEP file" },
+                    { "required", true }
+                }
+            }
+        },
+                appbundles = new[]
+                {
+            appBundleQualifiedId  // e.g., Synera_NickName.ExportStepAppBundle+12
+        },
+                description = "Activity to export Fusion 360 model to STEP file format"
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            Console.WriteLine("📦 Payload Sent:\n" + json);
+
+            var content = new StringContent(json);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _client.PostAsync(url, content);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ STEP Export Activity created successfully.");
+                return true;
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create STEP export activity: {response.StatusCode}");
+                Console.WriteLine("📥 Error Details: " + responseBody);
+                return false;
+            }
+        }
+
         public async Task<bool> CreateActivityAliasAsync(string accessToken, string activityId, int version, string aliasId)
         {
             string url = $"https://developer.api.autodesk.com/da/us-east/v3/activities/{activityId}/aliases";
@@ -305,6 +378,7 @@ namespace Synera_Addin
                 return false;
             }
         }
+
         public async Task<string?> CreateWorkItemAsync(
     string accessToken,
     string fullyQualifiedActivityId,
