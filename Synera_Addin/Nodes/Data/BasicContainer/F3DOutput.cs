@@ -242,12 +242,12 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
 
-            string aliasId = "0185";
+            string aliasId = "0305";
             string accessToken = _accessToken;
-            string activityId = "ConfigureDesignActivity_113";
-            string appBundleId = "ConfigureDesignAppBundle_v113";
+            string activityId = "ConfigureDesignActivity_305";
+            string appBundleId = "ConfigureDesignAppBundle_v305";
             string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
-            string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
+            string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
 
             string appBundleQualifiedId = __nickName + "." + appBundleId + "+" + aliasId;
             string fullyQualifiedActivityId = __nickName + "." + activityId + "+" + aliasId + "mycurrentAlias";
@@ -268,11 +268,13 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             await uploader.CreateActivityAsync(accessToken, activityId, appBundleQualifiedId);
 
             await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId + "mycurrentAlias");
-            var workItemId = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
-            var result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+            var WorkItemStepResult = await uploader.CreateWorkItemAsyncForStep(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
+            var result = await uploader.CheckWorkItemStatusAsync(accessToken, WorkItemStepResult.WorkItemId);
+            var filepath = @"C:\Users\Vandana Mishra\Desktop\output";
+            var isDownloaded  = await uploader.DownloadStepFileAsync( WorkItemStepResult.OutputStepUrl, filepath);
             while (result.status == "inprogress")
             {
-                result = await uploader.CheckWorkItemStatusAsync(accessToken, workItemId);
+                result = await uploader.CheckWorkItemStatusAsync(accessToken, WorkItemStepResult.WorkItemId);
             }
 
             Console.WriteLine("Status: " + result.status);

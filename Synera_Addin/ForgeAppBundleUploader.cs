@@ -237,17 +237,26 @@ namespace Synera_Addin
                 "ResultParameters", new Dictionary<string, object>
                 {
                     { "verb", "get" },
-                    { "localName", "output.json" }, // This is what the Fusion script writes to
+                    { "localName", "output.json" },
                     { "description", "The output parameters from script" },
+                    { "required", false }
+                }
+            },
+            {
+                "outputStep", new Dictionary<string, object>
+                {
+                    { "verb", "put" },
+                    { "localName", "Output.step" },
+                    { "description", "The exported STEP file" },
                     { "required", false }
                 }
             }
         },
                 appbundles = new[]
                 {
-            appBundleQualifiedId  // e.g., Synera_NickName.ConfigureDesignAppBundle_v6+01
+            appBundleQualifiedId
         },
-                description = "Activity to run ConfigureDesign script and fetch user parameters"
+                description = "Activity to run ConfigureDesign script, fetch user parameters, and export STEP"
             };
 
             var json = JsonSerializer.Serialize(payload);
@@ -364,6 +373,146 @@ namespace Synera_Addin
             }
         }
 
+        public async Task<WorkItemStepResult?> CreateWorkItemAsyncForStep(
+    string accessToken,
+    string fullyQualifiedActivityId,
+    string personalAccessToken,
+    string fileUrn,
+    Dictionary<string, string> parameters)
+        {
+            string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
+
+            var taskParametersObject = new
+            {
+                fileURN = fileUrn,
+                parameters = parameters
+            };
+
+            string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
+
+            // Create signed URL for output STEP
+            await CreateBucketIfNotExistsAsync("aayush-08072025-joshi", accessToken);
+            string outputStepPutUrl = await CreateSignedPutUrlAsync("Output.step", accessToken);
+
+            var workItemPayload = new
+            {
+                activityId = fullyQualifiedActivityId,
+                arguments = new Dictionary<string, object>
+        {
+            { "PersonalAccessToken", new { value = personalAccessToken } },
+            { "TaskParameters", new { value = taskParametersJson } },
+            { "outputStep", new {
+                verb = "put",
+                url = outputStepPutUrl,
+                headers = new Dictionary<string, string>
+                {
+                    { "Authorization", $"Bearer {accessToken}" }
+                }
+            }}
+        }
+            };
+
+            var json = JsonSerializer.Serialize(workItemPayload);
+            Console.WriteLine("📦 Payload Sent:\n" + json);
+
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            _client.DefaultRequestHeaders.Clear();
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _client.PostAsync(url, content);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ WorkItem created successfully.");
+                Console.WriteLine("🔁 Response: " + responseBody);
+
+                using var doc = JsonDocument.Parse(responseBody);
+                string workItemId = doc.RootElement.GetProperty("id").GetString();
+
+                return new WorkItemStepResult
+                {
+                    WorkItemId = workItemId,
+                    OutputStepUrl = outputStepPutUrl
+                };
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create WorkItem: {response.StatusCode}");
+                Console.WriteLine("📥 Error Details: " + responseBody);
+                return null;
+            }
+        }
+
+        public async Task<bool> DownloadStepFileAsync(string signedUrl, string localPath)
+        {
+            var response = await _client.GetAsync(signedUrl);
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("❌ Failed to download STEP file.");
+                return false;
+            }
+
+            byte[] data = await response.Content.ReadAsByteArrayAsync();
+            await File.WriteAllBytesAsync(localPath, data);
+
+            Console.WriteLine($"✅ STEP file downloaded at: {localPath}");
+            return true;
+        }
+
+        public async Task<bool> CreateBucketIfNotExistsAsync(string bucketKey, string accessToken)
+        {
+            string url = "https://developer.api.autodesk.com/oss/v2/buckets";
+            _client.DefaultRequestHeaders.Clear(); // clear stale headers
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var payload = new
+            {
+                bucketKey = bucketKey,
+                policyKey = "transient"
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+            var response = await _client.PostAsync(url, content);
+            string responseText = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode || (int)response.StatusCode == 409) // 409 = already exists
+            {
+                Console.WriteLine("✅ Bucket created or already exists.");
+                return true;
+            }
+
+            Console.WriteLine($"❌ Bucket creation failed: {response.StatusCode} - {responseText}");
+            return false;
+        }
+        public async Task<string> CreateSignedPutUrlAsync(string objectName, string access_token)
+        {
+            string bucketKey = "aayush-08072025-joshi";
+            string url = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{objectName}/signed?access=write";
+
+            _client.DefaultRequestHeaders.Clear(); 
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", access_token);
+
+            // Send an empty JSON payload with the correct Content-Type
+            var emptyJsonContent = new StringContent("{}", Encoding.UTF8, "application/json");
+
+            var response = await _client.PostAsync(url, emptyJsonContent);
+            string responseJson = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"❌ Error: {response.StatusCode} - {responseJson}");
+                throw new Exception($"Forge API failed: {responseJson}");
+            }
+
+            var result = JsonDocument.Parse(responseJson);
+            return result.RootElement.GetProperty("signedUrl").GetString();
+        }
+
+
+
         public async Task<(string status, string? reportUrl)> CheckWorkItemStatusAsync(string accessToken, string workItemId)
         {
             string url = $"https://developer.api.autodesk.com/da/us-east/v3/workitems/{workItemId}";
@@ -445,6 +594,11 @@ namespace Synera_Addin
             {
                 get; set;
             }
+        }
+        public class WorkItemStepResult
+        {
+            public string WorkItemId { get; set; }
+            public string OutputStepUrl { get; set; }
         }
 
     }
