@@ -20,6 +20,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Text;
@@ -144,7 +145,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
                 var result = RunFusionAutomationAsync(url, parameters, inputValues, new Progress<double>()).GetAwaiter().GetResult();
 
-                string decodedURN = ExtractAndDecodeUrnFromUrl(url).FirstOrDefault();
+                string decodedURN = ExtractAndDecodeUrnFromUrl(url)[1];
                 string stepFilePath = ExportStepFileAsync(_accessToken, decodedURN, parameters).GetAwaiter().GetResult();
 
                 IGeometryImportTranslator translator = Application.Current.TranslatorManager
@@ -499,9 +500,9 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
         {
             string stepOutputUrl = string.Empty;
 
-            string aliasId = "014";
-            string activityID = "ExportStepActivity_14";
-            string appBundleId = "ExportStepAppBundle_1";
+            string aliasId = "016";
+            string activityID = "ExportStepActivity_16";
+            string appBundleId = "ExportStepAppBundle_16";
             string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
             string zipPath = @"D:\SYNERA\Synera_Addin\Synera_Addin\ExportStep.zip"; // Contains the AppBundle for exporting STEP
 
@@ -524,7 +525,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             await uploader.CreateActivityAliasAsync(accessToken, activityID, 1, aliasId + "mycurrentAlias");
 
             // Submit the work item
-            var stepWorkItem = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedUrn, parameters);
+            var stepWorkItem = await uploader.CreateWorkItemAsyncStep(accessToken, fullyQualifiedActivityId, pAT, decodedUrn, "synera - fusion - bucket","ExportModel.step",parameters);
             var result = await uploader.CheckWorkItemStatusAsync(accessToken, stepWorkItem);
 
            while (result.status == "inprogress")

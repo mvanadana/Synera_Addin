@@ -285,43 +285,43 @@ namespace Synera_Addin
                 engine = "Autodesk.Fusion+Latest",
                 commandLine = new[]
                 {
-            @"$(engine.path)\Fusion360Core.exe --headless /Contents/ExportStep.py"
-        },
+                @"$(engine.path)\Fusion360Core.exe --headless /Contents/ExportStep.py"
+            },
                 parameters = new Dictionary<string, object>
-        {
-            {
-                "InputFusionFile", new Dictionary<string, object>
                 {
-                    { "verb", "get" },
-                    { "description", "Input Fusion 360 design" },
-                    { "required", true },
-                    { "localName", "input.f3d" }
-                }
-            },
-            {
-                "PersonalAccessToken", new Dictionary<string, object>
-                {
-                    { "verb", "read" },
-                    { "description", "Fusion personal access token" },
-                    { "required", true }
-                }
-            },
-            {
-                "OutputStepFile", new Dictionary<string, object>
-                {
-                    { "verb", "put" },
-                    { "localName", "output.step" },
-                    { "description", "Exported STEP file" },
-                    { "required", true }
-                }
-            }
-        },
-                appbundles = new[]
-                {
-            appBundleQualifiedId  // e.g., Synera_NickName.ExportStepAppBundle+12
-        },
-                description = "Activity to export Fusion 360 model to STEP file format"
-            };
+                    {
+                        "InputFusionFile", new Dictionary<string, object>
+                        {
+                            { "verb", "get" },
+                            { "description", "Input Fusion 360 design" },
+                            { "required", true },
+                            { "localName", "input.f3d" }
+                        }
+                    },
+                    {
+                        "PersonalAccessToken", new Dictionary<string, object>
+                        {
+                            { "verb", "read" },
+                            { "description", "Fusion personal access token" },
+                            { "required", true }
+                        }
+                    },
+                    {
+                        "OutputStepFile", new Dictionary<string, object>
+                        {
+                            { "verb", "put" },
+                            { "localName", "output.step" },
+                            { "description", "Exported STEP file" },
+                            { "required", true }
+                        }
+                    }
+                },
+                        appbundles = new[]
+                        {
+                    appBundleQualifiedId  // e.g., Synera_NickName.ExportStepAppBundle+12
+                },
+                        description = "Activity to export Fusion 360 model to STEP file format"
+                    };
 
             var json = JsonSerializer.Serialize(payload);
             Console.WriteLine("📦 Payload Sent:\n" + json);
@@ -379,12 +379,7 @@ namespace Synera_Addin
             }
         }
 
-        public async Task<string?> CreateWorkItemAsync(
-    string accessToken,
-    string fullyQualifiedActivityId,
-    string personalAccessToken,
-    string fileUrn,
-    Dictionary<string, string> parameters)
+        public async Task<string?> CreateWorkItemAsync(string accessToken,string fullyQualifiedActivityId,string personalAccessToken,string fileUrn,Dictionary<string, string> parameters)
         {
             string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
 
@@ -392,7 +387,7 @@ namespace Synera_Addin
             var taskParametersObject = new
             {
                 fileURN = fileUrn,
-                parameters = parameters// keep empty for now
+                parameters = parameters
             };
 
             string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
@@ -401,14 +396,14 @@ namespace Synera_Addin
             {
                 activityId = fullyQualifiedActivityId,
                 arguments = new Dictionary<string, object>
-    {
-        { "PersonalAccessToken", new {
-            value = personalAccessToken
-        }},
-        { "TaskParameters", new {
-            value = taskParametersJson
-        }},
-    }
+                {
+                    { "PersonalAccessToken", new {
+                        value = personalAccessToken
+                    }},
+                    { "TaskParameters", new {
+                        value = taskParametersJson
+                    }},
+                }
             };
 
             string json = JsonSerializer.Serialize(workItemPayload);
@@ -437,6 +432,59 @@ namespace Synera_Addin
                 return null;
             }
         }
+
+        public async Task<string?> CreateWorkItemAsyncStep(string accessToken,string fullyQualifiedActivityId,string personalAccessToken,string fileUrn,string bucketKey,string outputFileName = "ExportedModel.step",Dictionary<string, string>? parameters = null)
+        {
+            string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
+
+            string outputUrl = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{outputFileName}";
+
+            var arguments = new Dictionary<string, object>
+            {
+                { "InputFusionFile", new {
+                    url = $"urn:{fileUrn}",
+                    headers = new Dictionary<string, string> {
+                        { "Authorization", $"Bearer {accessToken}" }
+                    }
+                }},
+                { "OutputStepFile", new {
+                    verb = "put",
+                    url = outputUrl,
+                    headers = new Dictionary<string, string> {
+                        { "Authorization", $"Bearer {accessToken}" }
+                    }
+                }},
+                { "PersonalAccessToken", new {
+                    value = personalAccessToken
+                }}
+            };
+
+            var workItemPayload = new
+            {
+                activityId = fullyQualifiedActivityId,
+                arguments
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(workItemPayload), Encoding.UTF8, "application/json");
+
+            _client.DefaultRequestHeaders.Clear();
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _client.PostAsync(url, content);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                using var doc = JsonDocument.Parse(responseBody);
+                return doc.RootElement.GetProperty("id").GetString();
+            }
+            else
+            {
+                Console.WriteLine("Failed to create WorkItem:\n" + responseBody);
+                return null;
+            }
+        }
+
 
         public async Task<(string status, string? reportUrl)> CheckWorkItemStatusAsync(string accessToken, string workItemId)
         {
