@@ -314,7 +314,7 @@ namespace Synera_Addin
                 return false;
             }
         }
-        public async Task<string?> CreateWorkItemAsync(
+        public async Task<WorkItemStepResult?> CreateWorkItemAsync(
     string accessToken,
     string fullyQualifiedActivityId,
     string personalAccessToken,
@@ -331,7 +331,8 @@ namespace Synera_Addin
             };
 
             string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
-
+            await CreateBucketIfNotExistsAsync("aayush-08072025-joshi", accessToken);
+            string outputStepPutUrl = await CreateSignedPutUrlAsync("Output.step", accessToken);
             var workItemPayload = new
             {
                 activityId = fullyQualifiedActivityId,
@@ -363,7 +364,14 @@ namespace Synera_Addin
                 Console.WriteLine("🔁 Response: " + responseBody);
 
                 using var doc = JsonDocument.Parse(responseBody);
-                return doc.RootElement.GetProperty("id").GetString();
+                string workItemId = doc.RootElement.GetProperty("id").GetString();
+
+                return new WorkItemStepResult
+                {
+                    WorkItemId = workItemId,
+                    OutputStepUrl = outputStepPutUrl
+                };
+
             }
             else
             {
@@ -447,18 +455,30 @@ namespace Synera_Addin
 
         public async Task<bool> DownloadStepFileAsync(string signedUrl, string localPath)
         {
-            var response = await _client.GetAsync(signedUrl);
-            if (!response.IsSuccessStatusCode)
+            // Use a clean HttpClient with no Forge auth headers
+            using var client = new HttpClient();
+
+            try
             {
-                Console.WriteLine("❌ Failed to download STEP file.");
+                var response = await client.GetAsync(signedUrl);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"❌ Failed to download STEP file. Status: {response.StatusCode}");
+                    Console.WriteLine(await response.Content.ReadAsStringAsync());
+                    return false;
+                }
+
+                byte[] data = await response.Content.ReadAsByteArrayAsync();
+                await File.WriteAllBytesAsync(localPath, data);
+
+                Console.WriteLine($"✅ STEP file downloaded at: {localPath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("❌ Exception while downloading STEP file: " + ex.Message);
                 return false;
             }
-
-            byte[] data = await response.Content.ReadAsByteArrayAsync();
-            await File.WriteAllBytesAsync(localPath, data);
-
-            Console.WriteLine($"✅ STEP file downloaded at: {localPath}");
-            return true;
         }
 
         public async Task<bool> CreateBucketIfNotExistsAsync(string bucketKey, string accessToken)
@@ -490,7 +510,7 @@ namespace Synera_Addin
         public async Task<string> CreateSignedPutUrlAsync(string objectName, string access_token)
         {
             string bucketKey = "aayush-08072025-joshi";
-            string url = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{objectName}/signed?access=write";
+            string url = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{objectName}/signed?access=read";
 
             _client.DefaultRequestHeaders.Clear(); 
             _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", access_token);
@@ -510,8 +530,6 @@ namespace Synera_Addin
             var result = JsonDocument.Parse(responseJson);
             return result.RootElement.GetProperty("signedUrl").GetString();
         }
-
-
 
         public async Task<(string status, string? reportUrl)> CheckWorkItemStatusAsync(string accessToken, string workItemId)
         {

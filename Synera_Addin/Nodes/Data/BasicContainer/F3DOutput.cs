@@ -242,10 +242,10 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
 
-            string aliasId = "0305";
+            string aliasId = "0350";
             string accessToken = _accessToken;
-            string activityId = "ConfigureDesignActivity_305";
-            string appBundleId = "ConfigureDesignAppBundle_v305";
+            string activityId = "ConfigureDesignActivity_350";
+            string appBundleId = "ConfigureDesignAppBundle_v350";
             string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
 
@@ -268,15 +268,14 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             await uploader.CreateActivityAsync(accessToken, activityId, appBundleQualifiedId);
 
             await uploader.CreateActivityAliasAsync(accessToken, activityId, 1, aliasId + "mycurrentAlias");
-            var WorkItemStepResult = await uploader.CreateWorkItemAsyncForStep(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
+            var WorkItemStepResult = await uploader.CreateWorkItemAsync(accessToken, fullyQualifiedActivityId, pAT, decodedURN, parameters);
             var result = await uploader.CheckWorkItemStatusAsync(accessToken, WorkItemStepResult.WorkItemId);
-            var filepath = @"C:\Users\Vandana Mishra\Desktop\output";
-            var isDownloaded  = await uploader.DownloadStepFileAsync( WorkItemStepResult.OutputStepUrl, filepath);
+            var filepath = @"E:\output\Output.step";
             while (result.status == "inprogress")
             {
                 result = await uploader.CheckWorkItemStatusAsync(accessToken, WorkItemStepResult.WorkItemId);
             }
-
+            var isDownloaded = await uploader.DownloadStepFileAsync(WorkItemStepResult.OutputStepUrl, filepath);
             Console.WriteLine("Status: " + result.status);
             if (!string.IsNullOrEmpty(result.reportUrl))
             {
