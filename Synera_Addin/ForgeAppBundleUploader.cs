@@ -528,6 +528,7 @@ namespace Synera_Addin
             }
 
             var result = JsonDocument.Parse(responseJson);
+
             return result.RootElement.GetProperty("signedUrl").GetString();
         }
 

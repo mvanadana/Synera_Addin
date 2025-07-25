@@ -4,6 +4,7 @@ using Synera.Core;
 using Synera.Core.Graph.Data;
 using Synera.Core.Graph.Enums;
 using Synera.Core.Implementation.ApplicationService;
+using Synera.Core.Implementation.ApplicationService.Settings.CustomProperties;
 using Synera.Core.Implementation.Graph;
 using Synera.Core.Implementation.Graph.Data.DataTypes;
 using Synera.Core.Implementation.UI;
@@ -95,10 +96,10 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
                 new LocalizableString("URL of the .f3d file."),
                 ParameterAccess.Item);
 
-            OutputParameterManager.AddParameter<SyneraString>(
+            OutputParameterManager.AddParameter<IBody>(
                 new LocalizableString("Bodies/Parameters"),
                 new LocalizableString("Bodies/properties of the uploaded file"),
-                ParameterAccess.Item);
+                ParameterAccess.List);
         }
 
         protected override void SolveInstance(IDataAccess dataAccess)
@@ -141,7 +142,16 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
 
                 var result = RunFusionAutomationAsync(url, parameters, inputValues, new Progress<double>()).GetAwaiter().GetResult();
-                dataAccess.SetData(0, result.ToString());
+
+                string filePath = @"E:\output\Output.step"; // Default output path, can be changed as needed
+                IGeometryImportTranslator translator = Application.Current.TranslatorManager
+               .Get<IGeometryImportTranslator>(t => t.IsSupportedImportFormat(filePath));
+                if (translator == null)
+                    throw new InvalidOperationException("The file format is not supported.");
+
+                IBody[] bodies = translator.ImportBodies(filePath);
+
+                dataAccess.SetListData(0, bodies.ToList());
             }
             catch (Exception ex)
             {
@@ -242,10 +252,10 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
 
-            string aliasId = "0350";
+            string aliasId = "0361";
             string accessToken = _accessToken;
-            string activityId = "ConfigureDesignActivity_350";
-            string appBundleId = "ConfigureDesignAppBundle_v350";
+            string activityId = "ConfigureDesignActivity_361";
+            string appBundleId = "ConfigureDesignAppBundle_v361";
             string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
 
