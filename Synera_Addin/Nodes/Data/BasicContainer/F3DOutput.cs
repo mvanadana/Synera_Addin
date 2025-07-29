@@ -41,7 +41,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
     {
         private const int FilePathInputIndex = 0;
         private const string __bucketKey = "aayush-08072025-joshi";
-        private const string __nickName = "Synera_NickName";
+        private const string __nickName = "Synera_NickName01";
         private const string __region = "us-east";
         private const int __inputVariablesStartIndex = 2;
 
@@ -252,11 +252,11 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
             var decodedURNlist = ExtractAndDecodeUrnFromUrl(urnOfFile);
             var decodedURN = decodedURNlist[1];
 
-            string aliasId = "0361";
+            string aliasId = "0001";
             string accessToken = _accessToken;
-            string activityId = "ConfigureDesignActivity_361";
-            string appBundleId = "ConfigureDesignAppBundle_v361";
-            string pAT = "bf738a19c5667dbffa7fad82f68cabea59a025ff";
+            string activityId = "ConfigureDesignActivity_001";
+            string appBundleId = "ConfigureDesignAppBundle_001";
+            string pAT = "76196703341cc8c84b7c346c8f2816fd91acc5b6";
             string zipPath = @"E:\DT\Synera_Addin\Synera_Addin\ConfigureDesign.zip";
 
             string appBundleQualifiedId = __nickName + "." + appBundleId + "+" + aliasId;
