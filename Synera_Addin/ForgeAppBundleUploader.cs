@@ -1,0 +1,675 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+
+namespace Synera_Addin
+{
+
+    public class ForgeAppBundleUploader
+    {
+        private readonly HttpClient _client;
+
+        public ForgeAppBundleUploader()
+        {
+            _client = new HttpClient();
+        }
+
+        public async Task<string?> UploadAppBundleAsync(string accessToken, string zipFilePath)
+        {
+            string registerUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles";
+
+            var registerPayload = new
+            {
+                id = "ConfigureDesignAppBundle_v5",
+                engine = "Autodesk.Fusion+Latest",
+                description = "My first fusion appbundle based on the latest Fusion engine"
+            };
+
+            var requestContent = new StringContent(JsonSerializer.Serialize(registerPayload));
+            requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            HttpResponseMessage registerResponse = await _client.PostAsync(registerUrl, requestContent);
+
+            // If the appbundle already exists, register a new version
+            if (registerResponse.StatusCode == HttpStatusCode.Conflict)
+            {
+                Console.WriteLine("AppBundle already exists. Registering a new version...");
+
+                string versionUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles/ConfigureDesignAppBundle/versions";
+                registerResponse = await _client.PostAsync(versionUrl, requestContent);
+            }
+
+            if (!registerResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"Failed to register AppBundle: {registerResponse.StatusCode}");
+                return null;
+            }
+
+            string responseString = await registerResponse.Content.ReadAsStringAsync();
+            using JsonDocument doc = JsonDocument.Parse(responseString);
+            JsonElement root = doc.RootElement;
+
+            var uploadParameters = root.GetProperty("uploadParameters");
+            var endpointURL = uploadParameters.GetProperty("endpointURL").GetString();
+
+            var formDataDict = new Dictionary<string, string>();
+            foreach (var prop in uploadParameters.GetProperty("formData").EnumerateObject())
+            {
+                formDataDict[prop.Name] = prop.Value.GetString();
+            }
+
+            // Upload the zip file
+            using var uploadClient = new HttpClient();
+            using var multipartContent = new MultipartFormDataContent();
+            foreach (var item in formDataDict)
+            {
+                multipartContent.Add(new StringContent(item.Value), item.Key);
+            }
+
+            var fileContent = new ByteArrayContent(File.ReadAllBytes(zipFilePath));
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            multipartContent.Add(fileContent, "file", Path.GetFileName(zipFilePath));
+
+            var uploadResponse = await uploadClient.PostAsync(endpointURL, multipartContent);
+
+            if (uploadResponse.StatusCode == HttpStatusCode.OK)
+            {
+                Console.WriteLine("AppBundle uploaded successfully.");
+                return endpointURL;
+            }
+            else
+            {
+                Console.WriteLine($"Upload failed with status: {uploadResponse.StatusCode}");
+                return null;
+            }
+        }
+        public async Task<UploadAppBundleMetadata?> RegisterAppBundleAsync(string accessToken, string appBundleId, string zipFilePath)
+        {
+            string registerUrl = "https://developer.api.autodesk.com/da/us-east/v3/appbundles";
+
+            var registerPayload = new
+            {
+                id = appBundleId,
+                engine = "Autodesk.Fusion+Latest",
+                description = "Fusion AppBundle using Design Automation"
+            };
+
+            var requestContent = new StringContent(JsonSerializer.Serialize(registerPayload));
+            requestContent.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            HttpResponseMessage registerResponse = await _client.PostAsync(registerUrl, requestContent);
+
+            // Fallback to version registration if AppBundle already exists
+            if (registerResponse.StatusCode == HttpStatusCode.Conflict)
+            {
+                Console.WriteLine("⚠️ AppBundle already exists. Creating a new version...");
+                string versionUrl = $"https://developer.api.autodesk.com/da/us-east/v3/appbundles/{appBundleId}/versions";
+                registerResponse = await _client.PostAsync(versionUrl, requestContent);
+            }
+
+            if (!registerResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"❌ Failed to register AppBundle: {registerResponse.StatusCode}");
+                return null;
+            }
+
+            string responseString = await registerResponse.Content.ReadAsStringAsync();
+            using JsonDocument doc = JsonDocument.Parse(responseString);
+            JsonElement root = doc.RootElement;
+
+            var uploadParams = root.GetProperty("uploadParameters");
+            string endpointUrl = uploadParams.GetProperty("endpointURL").GetString() ?? "";
+
+            var formDataDict = new Dictionary<string, string>();
+            foreach (var prop in uploadParams.GetProperty("formData").EnumerateObject())
+            {
+                formDataDict[prop.Name] = prop.Value.GetString() ?? "";
+            }
+
+            string fullAppBundleId = root.GetProperty("id").GetString() ?? "";
+            int version = root.GetProperty("version").GetInt32();
+
+            return new UploadAppBundleMetadata
+            {
+                EndpointUrl = endpointUrl,
+                FormData = formDataDict,
+                AppBundleId = fullAppBundleId,
+                Version = version
+            };
+        }
+        public async Task<bool> UploadZipToS3Async(UploadAppBundleMetadata metadata, string zipFilePath)
+        {
+            if (!File.Exists(zipFilePath))
+            {
+                Console.WriteLine("❌ Zip file not found.");
+                return false;
+            }
+
+            using var client = new HttpClient();
+            using var content = new MultipartFormDataContent();
+
+            foreach (var kvp in metadata.FormData)
+            {
+                content.Add(new StringContent(kvp.Value), kvp.Key);
+            }
+
+            var zipBytes = new ByteArrayContent(File.ReadAllBytes(zipFilePath));
+            zipBytes.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            content.Add(zipBytes, "file", Path.GetFileName(zipFilePath));
+
+            var response = await client.PostAsync(metadata.EndpointUrl, content);
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ AppBundle uploaded to S3 successfully.");
+                return true;
+            }
+
+            Console.WriteLine($"❌ Upload to S3 failed: {response.StatusCode}");
+            return false;
+        }
+        public async Task<bool> CreateAppBundleAliasAsync(string accessToken, string appBundleId, string aliasId, int version)
+        {
+            string aliasUrl = $"https://developer.api.autodesk.com/da/us-east/v3/appbundles/{appBundleId}/aliases";
+
+            var aliasPayload = new
+            {
+                id = aliasId,
+                version = version
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(aliasPayload));
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            var response = await _client.PostAsync(aliasUrl, content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ Alias created successfully.");
+                return true;
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create alias: {response.StatusCode}");
+                return false;
+            }
+        }
+        public async Task<bool> CreateActivityAsync(string accessToken, string activityId, string appBundleQualifiedId)
+        {
+            string url = "https://developer.api.autodesk.com/da/us-east/v3/activities";
+
+            var payload = new
+            {
+                id = activityId,
+                engine = "Autodesk.Fusion+Latest",
+                commandLine = new[]
+                {
+            @"$(engine.path)\Fusion360Core.exe --headless /Contents/main.ts"
+        },
+                parameters = new Dictionary<string, object>
+        {
+            {
+                "TaskParameters", new Dictionary<string, object>
+                {
+                    { "verb", "read" },
+                    { "description", "The parameters for the script" },
+                    { "required", false }
+                }
+            },
+            {
+                "PersonalAccessToken", new Dictionary<string, object>
+                {
+                    { "verb", "read" },
+                    { "description", "Fusion personal access token" },
+                    { "required", true }
+                }
+            },
+            {
+                "ResultParameters", new Dictionary<string, object>
+                {
+                    { "verb", "get" },
+                    { "localName", "output.json" },
+                    { "description", "The output parameters from script" },
+                    { "required", false }
+                }
+            },
+            {
+                "outputStep", new Dictionary<string, object>
+                {
+                    { "verb", "put" },
+                    { "localName", "Output.step" },
+                    { "description", "The exported STEP file" },
+                    { "required", false }
+                }
+            }
+        },
+                appbundles = new[]
+                {
+            appBundleQualifiedId
+        },
+                description = "Activity to run ConfigureDesign script, fetch user parameters, and export STEP"
+            };
+
+            var json = JsonSerializer.Serialize(payload);
+            Console.WriteLine("📦 Payload Sent:\n" + json);
+
+            var content = new StringContent(json);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _client.PostAsync(url, content);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ Activity created successfully.");
+                return true;
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create activity: {response.StatusCode}");
+                Console.WriteLine("📥 Error Details: " + responseBody);
+                return false;
+            }
+        }
+
+        public async Task<bool> CreateActivityAliasAsync(string accessToken, string activityId, int version, string aliasId)
+        {
+            string url = $"https://developer.api.autodesk.com/da/us-east/v3/activities/{activityId}/aliases";
+
+            var aliasPayload = new
+            {
+                version = version,
+                id = aliasId
+            };
+
+            var json = JsonSerializer.Serialize(aliasPayload);
+            var content = new StringContent(json);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            HttpResponseMessage response = await _client.PostAsync(url, content);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"✅ Alias '{aliasId}' created for activity '{activityId}', version {version}.");
+                return true;
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create activity alias: {response.StatusCode}");
+                Console.WriteLine("📥 Error Details: " + responseBody);
+                return false;
+            }
+        }
+        public async Task<WorkItemStepResult?> CreateWorkItemAsync(
+    string accessToken,
+    string fullyQualifiedActivityId,
+    string personalAccessToken,
+    string fileUrn,
+    Dictionary<string, string> parameters)
+        {
+            string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
+
+            // JSON string of TaskParameters, including fileURN and empty parameter list (for now)
+            var taskParametersObject = new
+            {
+                fileURN = fileUrn,
+                parameters = parameters
+            };
+
+            string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
+            await CreateBucketIfNotExistsAsync("vandana-08072025-mishra", accessToken);
+            string outputStepPutUrl = await CreateSignedPutUrlAsync("Output.step", accessToken);
+
+            var workItemPayload = new
+            {
+                activityId = fullyQualifiedActivityId,
+                arguments = new Dictionary<string, object>
+        {
+            { "PersonalAccessToken", new {
+                value = personalAccessToken
+            }},
+            { "TaskParameters", new {
+                value = taskParametersJson
+            }},
+            { "outputStep", new {
+                verb = "put",
+                url = outputStepPutUrl,
+                headers = new Dictionary<string, string>
+                {
+                    { "Authorization", $"Bearer {accessToken}" }
+                }
+            }}
+        }
+            };
+
+            string json = JsonSerializer.Serialize(workItemPayload);
+            Console.WriteLine("📦 Payload Sent:\n" + json);
+
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            _client.DefaultRequestHeaders.Clear();
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _client.PostAsync(url, content);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ WorkItem created successfully.");
+                Console.WriteLine("🔁 Response: " + responseBody);
+
+                using var doc = JsonDocument.Parse(responseBody);
+                string workItemId = doc.RootElement.GetProperty("id").GetString();
+                string outputStepReadUrl = await CreateSignedReadUrlAsync("Output.step", accessToken);
+                return new WorkItemStepResult
+                {
+                    WorkItemId = workItemId,
+                    OutputStepUrl = outputStepReadUrl
+                };
+
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create WorkItem: {response.StatusCode}");
+                Console.WriteLine("📥 Error Details: " + responseBody);
+                return null;
+            }
+        }
+
+        public async Task<WorkItemStepResult?> CreateWorkItemAsyncForStep(
+    string accessToken,
+    string fullyQualifiedActivityId,
+    string personalAccessToken,
+    string fileUrn,
+    Dictionary<string, string> parameters)
+        {
+            string url = "https://developer.api.autodesk.com/da/us-east/v3/workitems";
+
+            var taskParametersObject = new
+            {
+                fileURN = fileUrn,
+                parameters = parameters
+            };
+
+            string taskParametersJson = JsonSerializer.Serialize(taskParametersObject);
+
+            // Create signed URL for output STEP
+            await CreateBucketIfNotExistsAsync("aayush-08072025-joshi", accessToken);
+            string outputStepPutUrl = await CreateSignedPutUrlAsync("Output.step", accessToken);
+
+            var workItemPayload = new
+            {
+                activityId = fullyQualifiedActivityId,
+                arguments = new Dictionary<string, object>
+        {
+            { "PersonalAccessToken", new { value = personalAccessToken } },
+            { "TaskParameters", new { value = taskParametersJson } },
+            { "outputStep", new {
+                verb = "put",
+                url = outputStepPutUrl,
+                headers = new Dictionary<string, string>
+                {
+                    { "Authorization", $"Bearer {accessToken}" }
+                }
+            }}
+        }
+            };
+
+            var json = JsonSerializer.Serialize(workItemPayload);
+            Console.WriteLine("📦 Payload Sent:\n" + json);
+
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            _client.DefaultRequestHeaders.Clear();
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var response = await _client.PostAsync(url, content);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode)
+            {
+                Console.WriteLine("✅ WorkItem created successfully.");
+                Console.WriteLine("🔁 Response: " + responseBody);
+
+                using var doc = JsonDocument.Parse(responseBody);
+                string workItemId = doc.RootElement.GetProperty("id").GetString();
+
+                return new WorkItemStepResult
+                {
+                    WorkItemId = workItemId,
+                    OutputStepUrl = outputStepPutUrl
+                };
+            }
+            else
+            {
+                Console.WriteLine($"❌ Failed to create WorkItem: {response.StatusCode}");
+                Console.WriteLine("📥 Error Details: " + responseBody);
+                return null;
+            }
+        }
+
+        public async Task<bool> DownloadStepFileAsync(string signedUrl, string localPath)
+        {
+            using var client = new HttpClient();
+
+            try
+            {
+                Console.WriteLine($"Sending GET request to: {signedUrl}");
+
+                var response = await client.GetAsync(signedUrl);
+                string responseContent = await response.Content.ReadAsStringAsync();
+
+                Console.WriteLine($"Response Status: {response.StatusCode}");
+                Console.WriteLine($" Content-Type: {response.Content.Headers.ContentType}");
+                Console.WriteLine($" Content-Length: {response.Content.Headers.ContentLength}");
+                Console.WriteLine($" Response Body Preview (first 500 chars):\n{responseContent.Substring(0, Math.Min(500, responseContent.Length))}");
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"❌ Download failed with status: {response.StatusCode}");
+                    Console.WriteLine("📥 Full Response Body:\n" + responseContent);
+                    return false;
+                }
+
+                // Save the downloaded file
+                byte[] fileBytes = await response.Content.ReadAsByteArrayAsync();
+
+                // Ensure directory exists
+                string? dir = Path.GetDirectoryName(localPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                await File.WriteAllBytesAsync(localPath, fileBytes);
+
+                Console.WriteLine($"✅ STEP file downloaded successfully to: {localPath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("❌ Exception during file download:");
+                Console.WriteLine(ex.ToString());
+                return false;
+            }
+        }
+
+
+        public async Task<bool> CreateBucketIfNotExistsAsync(string bucketKey, string accessToken)
+        {
+            string url = "https://developer.api.autodesk.com/oss/v2/buckets";
+            _client.DefaultRequestHeaders.Clear(); // clear stale headers
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            var payload = new
+            {
+                bucketKey = bucketKey,
+                policyKey = "transient"
+            };
+
+            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+
+            var response = await _client.PostAsync(url, content);
+            string responseText = await response.Content.ReadAsStringAsync();
+
+            if (response.IsSuccessStatusCode || (int)response.StatusCode == 409) // 409 = already exists
+            {
+                Console.WriteLine("✅ Bucket created or already exists.");
+                return true;
+            }
+
+            Console.WriteLine($"❌ Bucket creation failed: {response.StatusCode} - {responseText}");
+            return false;
+        }
+        public async Task<string> CreateSignedPutUrlAsync(string objectName, string access_token)
+        {
+            string bucketKey = "vandana-08072025-mishra";
+            string url = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{objectName}/signed?access=write";
+
+            _client.DefaultRequestHeaders.Clear(); 
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", access_token);
+
+            // Send an empty JSON payload with the correct Content-Type
+            var emptyJsonContent = new StringContent("{}", Encoding.UTF8, "application/json");
+
+            var response = await _client.PostAsync(url, emptyJsonContent);
+            string responseJson = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"❌ Error: {response.StatusCode} - {responseJson}");
+                throw new Exception($"Forge API failed: {responseJson}");
+            }
+            
+            var result = JsonDocument.Parse(responseJson);
+
+            return result.RootElement.GetProperty("signedUrl").GetString();
+        }
+        public async Task<string> CreateSignedReadUrlAsync(string objectName, string access_token)
+        {
+            string bucketKey = "vandana-08072025-mishra";
+            string url = $"https://developer.api.autodesk.com/oss/v2/buckets/{bucketKey}/objects/{objectName}/signed?access=read";
+
+            _client.DefaultRequestHeaders.Clear();
+            _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", access_token);
+
+            // Send an empty JSON payload with the correct Content-Type
+            var emptyJsonContent = new StringContent("{}", Encoding.UTF8, "application/json");
+
+            var response = await _client.PostAsync(url, emptyJsonContent);
+            string responseJson = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"❌ Error: {response.StatusCode} - {responseJson}");
+                throw new Exception($"Forge API failed: {responseJson}");
+            }
+
+            var result = JsonDocument.Parse(responseJson);
+
+            return result.RootElement.GetProperty("signedUrl").GetString();
+        }
+
+        public async Task<(string status, string? reportUrl)> CheckWorkItemStatusAsync(string accessToken, string workItemId)
+        {
+            string url = $"https://developer.api.autodesk.com/da/us-east/v3/workitems/{workItemId}";
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            var response = await _client.SendAsync(request);
+            string responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"❌ Failed to check WorkItem status: {response.StatusCode}");
+                Console.WriteLine("📥 Error Response: " + responseBody);
+                throw new HttpRequestException("Failed to check WorkItem status.");
+            }
+
+            using var doc = JsonDocument.Parse(responseBody);
+            string status = doc.RootElement.GetProperty("status").GetString() ?? "unknown";
+            string? reportUrl = doc.RootElement.TryGetProperty("reportUrl", out var reportProp)
+                                ? reportProp.GetString()
+                                : null;
+
+            Console.WriteLine($"✅ WorkItem Status: {status}");
+            if (!string.IsNullOrEmpty(reportUrl))
+                Console.WriteLine($"📄 Report URL: {reportUrl}");
+
+            return (status, reportUrl);
+        }
+
+        public async Task<Dictionary<string, string>> FetchOutputJsonFromReportAsync(string reportUrl)
+        {
+            using var client = new HttpClient();
+
+            // Download report JSON from the URL
+            var jsonResponse = await client.GetStringAsync(reportUrl);
+            jsonResponse = await client.GetStringAsync(reportUrl);
+            using var doc = JsonDocument.Parse(jsonResponse);
+
+            // Try to get the 'result' property
+            if (!doc.RootElement.TryGetProperty("result", out var resultElement))
+                throw new Exception("❌ Missing 'result' field in report JSON.");
+
+            // 'result' is a JSON string like: "{\"param\":\"value\"}"
+            var resultJson = resultElement.GetString();
+
+            if (string.IsNullOrWhiteSpace(resultJson))
+                throw new Exception("❌ 'result' field is empty.");
+
+            // Parse the inner JSON string to Dictionary
+            var resultDict = JsonSerializer.Deserialize<Dictionary<string, string>>(resultJson);
+
+            if (resultDict == null)
+                throw new Exception("❌ Failed to parse 'result' JSON string.");
+
+            return resultDict;
+        }
+
+
+        private class UploadParameters
+        {
+            public string endpointURL
+            {
+                get; set;
+            }
+            public Dictionary<string, string> formData
+            {
+                get; set;
+            }
+        }
+
+        public class UploadAppBundleMetadata
+        {
+            public string EndpointUrl { get; set; } = "";
+            public Dictionary<string, string> FormData { get; set; } = new();
+            public string AppBundleId { get; set; } = "";
+            public int Version
+            {
+                get; set;
+            }
+        }
+        public class WorkItemStepResult
+        {
+            public string WorkItemId { get; set; }
+            public string OutputStepUrl { get; set; }
+        }
+
+    }
+
+}

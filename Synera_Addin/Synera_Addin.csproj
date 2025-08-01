@@ -119,6 +119,12 @@
     </EmbeddedResource>
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="ConfigureDesign.zip">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <Target Name="CopyIconsAndHelpFiles" AfterTargets="Build">
     <ItemGroup>
       <Icons Include="$(ProjectDir)Icons/**/*" />

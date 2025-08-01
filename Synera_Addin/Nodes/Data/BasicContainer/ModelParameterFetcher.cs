@@ -1,10 +1,8 @@
 ﻿using Newtonsoft.Json.Linq;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace Synera_Addin.Nodes.Data.BasicContainer
@@ -23,7 +21,7 @@ namespace Synera_Addin.Nodes.Data.BasicContainer
 
         public async Task<string> GetMetadataGuidAsync(string urn)
         {
-           
+
             string safeUrn = Uri.EscapeDataString(urn);
 
             string url = $"https://developer.api.autodesk.com/modelderivative/v2/designdata/{safeUrn}/metadata";
